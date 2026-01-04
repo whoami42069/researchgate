@@ -885,7 +885,7 @@ export default function Home() {
                   <div className="space-y-6 animate-in fade-in">
                     {/* Research Context Summary (sticky) */}
                     {researchContext && (
-                      <div className="sticky top-0 bg-white/95 backdrop-blur-sm pb-4 border-b border-slate-100 -mx-6 px-6 -mt-6 pt-6">
+                      <div className="sticky top-0 bg-white/95 backdrop-blur-sm pb-4 border-b border-slate-100 -mx-6 px-6 -mt-6 pt-6 z-10">
                         <div className="flex items-start gap-2">
                           <BookOpen className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
                           <div>
@@ -896,138 +896,7 @@ export default function Home() {
                       </div>
                     )}
 
-                    {/* AI Summary - Editable */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-blue-600" />
-                          <h3 className="text-lg font-semibold text-slate-900">
-                            Research Profile
-                          </h3>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {/* Export AIM Persona Button */}
-                          <button
-                            onClick={generatePersona}
-                            disabled={generatingPersona}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Generate AIM Persona for ChatGPT/Claude"
-                          >
-                            {generatingPersona ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Share2 className="w-3.5 h-3.5" />
-                            )}
-                            {generatingPersona ? "Generating..." : "Export Persona"}
-                          </button>
-                          {/* Google Scholar Queries Button */}
-                          <button
-                            onClick={generateScholarQueries}
-                            disabled={generatingScholarQueries}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-orange-600 hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Generate optimized Google Scholar search queries"
-                          >
-                            {generatingScholarQueries ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <GraduationCap className="w-3.5 h-3.5" />
-                            )}
-                            {generatingScholarQueries ? "Generating..." : "Scholar Queries"}
-                          </button>
-                          {/* Edit Button */}
-                          <button
-                            onClick={() => {
-                              if (editingSummary) {
-                                setEditingSummary(false);
-                              } else {
-                                setEditingSummary(true);
-                              }
-                            }}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
-                          >
-                            {editingSummary ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-                            {editingSummary ? "Save" : "Edit"}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100">
-                        {editingSummary ? (
-                          <textarea
-                            value={editedSummary}
-                            onChange={(e) => setEditedSummary(e.target.value)}
-                            rows={4}
-                            className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                          />
-                        ) : (
-                          <p className="text-sm text-slate-700 leading-relaxed">
-                            {editedSummary || analysisResult.summary}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Generated Queries - Editable */}
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-slate-700">Search Queries Generated</h4>
-                        <button
-                          onClick={() => {
-                            if (editingQueries) {
-                              setEditingQueries(false);
-                            } else {
-                              setEditingQueries(true);
-                            }
-                          }}
-                          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
-                        >
-                          {editingQueries ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-                          {editingQueries ? "Save" : "Edit"}
-                        </button>
-                      </div>
-                      <div className="grid gap-2">
-                        {(editingQueries ? editedQueries : (editedQueries.length > 0 ? editedQueries : analysisResult.searchQueries))?.map((q: string, i: number) => (
-                          editingQueries ? (
-                            <input
-                              key={i}
-                              type="text"
-                              value={q}
-                              onChange={(e) => {
-                                const newQueries = [...editedQueries];
-                                newQueries[i] = e.target.value;
-                                setEditedQueries(newQueries);
-                              }}
-                              className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                          ) : (
-                            <div key={i} className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono text-slate-600">
-                              {q}
-                            </div>
-                          )
-                        ))}
-                        {editingQueries && (
-                          <button
-                            onClick={() => setEditedQueries([...editedQueries, ""])}
-                            className="px-3 py-2 rounded-lg border-2 border-dashed border-slate-300 text-xs text-slate-500 hover:border-blue-400 hover:text-blue-600 transition-colors"
-                          >
-                            + Add Query
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Search Action */}
-                    {searchStatus === "idle" && (
-                      <button
-                        onClick={performSearch}
-                        className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors shadow-sm"
-                      >
-                        <span className="flex items-center justify-center gap-2">
-                          <Search className="w-4 h-4" />
-                          Search Academic Articles
-                        </span>
-                      </button>
-                    )}
-
+                    {/* Search Status */}
                     {searchStatus === "searching" && (
                       <div className="flex flex-col items-center justify-center p-8 space-y-3">
                         <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
@@ -1035,9 +904,9 @@ export default function Home() {
                       </div>
                     )}
 
-                    {/* Search Results - Improved Layout */}
+                    {/* SEARCH RESULTS - NOW ABOVE RESEARCH PROFILE */}
                     {searchResults.length > 0 && (
-                      <div className="space-y-4 -mx-6 px-6 py-5 bg-gradient-to-b from-emerald-50/50 to-transparent border-t border-emerald-200">
+                      <div className="space-y-4 -mx-6 px-6 py-5 bg-gradient-to-b from-emerald-50/50 to-transparent border-y border-emerald-200">
                         <div className="flex items-center justify-between">
                           <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
                             <Search className="w-5 h-5 text-emerald-600" />
@@ -1061,7 +930,7 @@ export default function Home() {
                           </div>
                         </div>
 
-                        <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                        <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
                           {searchResults.map((article) => {
                             const isSaved = savedArticles.some(a => a.id === article.id);
                             const isExpanded = expandedArticles.has(article.id);
@@ -1071,7 +940,7 @@ export default function Home() {
                                 key={article.id}
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="group p-4 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-colors"
+                                className="group p-4 rounded-xl bg-white hover:shadow-md border border-slate-200 transition-all"
                               >
                                 <div className="flex gap-3">
                                   {/* Relevancy Badge with Source Bonus */}
@@ -1254,6 +1123,138 @@ export default function Home() {
                           })}
                         </div>
                       </div>
+                    )}
+
+                    {/* RESEARCH PROFILE - NOW BELOW SEARCH RESULTS */}
+                    <div className="space-y-3 pt-4 border-t border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-blue-600" />
+                          <h3 className="text-lg font-semibold text-slate-900">
+                            Research Profile
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {/* Export AIM Persona Button */}
+                          <button
+                            onClick={generatePersona}
+                            disabled={generatingPersona}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Generate AIM Persona for ChatGPT/Claude"
+                          >
+                            {generatingPersona ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Share2 className="w-3.5 h-3.5" />
+                            )}
+                            {generatingPersona ? "Generating..." : "Export Persona"}
+                          </button>
+                          {/* Google Scholar Queries Button */}
+                          <button
+                            onClick={generateScholarQueries}
+                            disabled={generatingScholarQueries}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-orange-600 hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Generate optimized Google Scholar search queries"
+                          >
+                            {generatingScholarQueries ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <GraduationCap className="w-3.5 h-3.5" />
+                            )}
+                            {generatingScholarQueries ? "Generating..." : "Scholar Queries"}
+                          </button>
+                          {/* Edit Button */}
+                          <button
+                            onClick={() => {
+                              if (editingSummary) {
+                                setEditingSummary(false);
+                              } else {
+                                setEditingSummary(true);
+                              }
+                            }}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
+                          >
+                            {editingSummary ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                            {editingSummary ? "Save" : "Edit"}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100">
+                        {editingSummary ? (
+                          <textarea
+                            value={editedSummary}
+                            onChange={(e) => setEditedSummary(e.target.value)}
+                            rows={4}
+                            className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                          />
+                        ) : (
+                          <p className="text-sm text-slate-700 leading-relaxed">
+                            {editedSummary || analysisResult.summary}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Generated Queries - Editable */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-semibold text-slate-700">Search Queries Generated</h4>
+                        <button
+                          onClick={() => {
+                            if (editingQueries) {
+                              setEditingQueries(false);
+                            } else {
+                              setEditingQueries(true);
+                            }
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
+                        >
+                          {editingQueries ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                          {editingQueries ? "Save" : "Edit"}
+                        </button>
+                      </div>
+                      <div className="grid gap-2">
+                        {(editingQueries ? editedQueries : (editedQueries.length > 0 ? editedQueries : analysisResult.searchQueries))?.map((q: string, i: number) => (
+                          editingQueries ? (
+                            <input
+                              key={i}
+                              type="text"
+                              value={q}
+                              onChange={(e) => {
+                                const newQueries = [...editedQueries];
+                                newQueries[i] = e.target.value;
+                                setEditedQueries(newQueries);
+                              }}
+                              className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          ) : (
+                            <div key={i} className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono text-slate-600">
+                              {q}
+                            </div>
+                          )
+                        ))}
+                        {editingQueries && (
+                          <button
+                            onClick={() => setEditedQueries([...editedQueries, ""])}
+                            className="px-3 py-2 rounded-lg border-2 border-dashed border-slate-300 text-xs text-slate-500 hover:border-blue-400 hover:text-blue-600 transition-colors"
+                          >
+                            + Add Query
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Search Action */}
+                    {searchStatus === "idle" && (
+                      <button
+                        onClick={performSearch}
+                        className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors shadow-sm"
+                      >
+                        <span className="flex items-center justify-center gap-2">
+                          <Search className="w-4 h-4" />
+                          Search Academic Articles
+                        </span>
+                      </button>
                     )}
 
                     {/* Exclusion Criteria - Editable */}

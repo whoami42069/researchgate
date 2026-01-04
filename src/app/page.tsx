@@ -198,12 +198,48 @@ export default function Home() {
 
   const copyPersona = async () => {
     if (!generatedPersona) return;
-    try {
-      await navigator.clipboard.writeText(generatedPersona);
+
+    // Try modern clipboard API first, then fallback for iOS
+    const copyToClipboard = async (text: string): Promise<boolean> => {
+      // Method 1: Modern Clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (err) {
+          console.log('Clipboard API failed, trying fallback...');
+        }
+      }
+
+      // Method 2: Fallback for iOS and older browsers
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+
+        // iOS specific: need to select with setSelectionRange
+        textArea.focus();
+        textArea.setSelectionRange(0, text.length);
+
+        const success = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        return success;
+      } catch (err) {
+        console.error('Fallback copy failed:', err);
+        return false;
+      }
+    };
+
+    const success = await copyToClipboard(generatedPersona);
+    if (success) {
       setCopiedPersona(true);
       setTimeout(() => setCopiedPersona(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy persona:', err);
+    } else {
+      alert('Unable to copy. Please select the text manually and copy.');
     }
   };
 

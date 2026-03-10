@@ -1,332 +1,343 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Upload, FileText, Search, Sparkles, X, Loader2, Hash, BookOpen, ChevronDown, ChevronUp, ExternalLink, BookmarkPlus, Bookmark, Copy, Check, Info, Pencil, Link2, Save, Share2, GraduationCap } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import {
+  Upload, FileText, Search, Sparkles, X, Loader2, Hash, BookOpen,
+  ChevronDown, ChevronUp, ExternalLink, BookmarkPlus, Bookmark,
+  Copy, Check, Info, Pencil, Link2, Save, Share2, GraduationCap,
+  Moon, Sun,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
+// ============================================================================
+// SOURCE COLOR MAP — consistent across app (Step 6H)
+// ============================================================================
+const SOURCE_COLORS: Record<string, string> = {
+  pubmed: "bg-emerald-400",
+  openalex: "bg-blue-400",
+  "semantic-scholar": "bg-violet-400",
+  arxiv: "bg-orange-400",
+  "europe-pmc": "bg-teal-400",
+  eric: "bg-indigo-400",
+  crossref: "bg-rose-400",
+  core: "bg-cyan-400",
+  doaj: "bg-amber-400",
+};
+
+function sourceDotColor(source: string) {
+  return SOURCE_COLORS[source] || "bg-slate-400";
+}
+
+function sourceLabel(source: string) {
+  if (source === "semantic-scholar") return "S2";
+  if (source === "europe-pmc") return "EPMC";
+  return (source || "unknown").toUpperCase();
+}
+
+// ============================================================================
+// SCORE BADGE (Step 6D)
+// ============================================================================
+function ScoreBadge({ score }: { score: number }) {
+  const tier =
+    score >= 85 ? "excellent" :
+    score >= 50 ? "strong" :
+    score >= 25 ? "moderate" : "weak";
+
+  return (
+    <div className={cn(
+      "w-14 h-14 rounded-lg flex flex-col items-center justify-center font-mono-accent shrink-0 border",
+      tier === "excellent" && "border-emerald-500/60 text-emerald-400 glow-green bg-emerald-500/10",
+      tier === "strong" && "border-cyan-500/40 text-cyan-400 bg-cyan-500/10",
+      tier === "moderate" && "border-amber-500/40 text-amber-500/70 bg-amber-500/10",
+      tier === "weak" && "border-border text-muted-foreground bg-secondary",
+    )}>
+      <span className="text-xl font-bold leading-none">{score}</span>
+      <span className="text-[9px] uppercase opacity-70 mt-0.5">
+        {tier === "excellent" ? "EXCL" : tier === "strong" ? "HIGH" : tier === "moderate" ? "MED" : "LOW"}
+      </span>
+    </div>
+  );
+}
+
+// ============================================================================
+// SCORE DISTRIBUTION BAR (Step 6D)
+// ============================================================================
+function ScoreDistributionBar({ articles }: { articles: any[] }) {
+  const dist = {
+    excellent: articles.filter(a => a.relevancyScore >= 85).length,
+    strong: articles.filter(a => a.relevancyScore >= 70 && a.relevancyScore < 85).length,
+    moderate: articles.filter(a => a.relevancyScore >= 50 && a.relevancyScore < 70).length,
+    weak: articles.filter(a => a.relevancyScore >= 25 && a.relevancyScore < 50).length,
+    poor: articles.filter(a => a.relevancyScore < 25).length,
+  };
+  const total = articles.length || 1;
+  const segments = [
+    { key: "excellent", count: dist.excellent, color: "bg-emerald-500", label: "85+" },
+    { key: "strong", count: dist.strong, color: "bg-cyan-500", label: "70-84" },
+    { key: "moderate", count: dist.moderate, color: "bg-amber-500", label: "50-69" },
+    { key: "weak", count: dist.weak, color: "bg-orange-500", label: "25-49" },
+    { key: "poor", count: dist.poor, color: "bg-slate-500", label: "<25" },
+  ];
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex h-2 rounded-full overflow-hidden bg-secondary">
+        {segments.map(s => s.count > 0 && (
+          <div key={s.key} className={cn(s.color, "transition-all")} style={{ width: `${(s.count / total) * 100}%` }} />
+        ))}
+      </div>
+      <div className="flex gap-3 text-[10px] font-mono-accent text-muted-foreground">
+        {segments.map(s => s.count > 0 && (
+          <span key={s.key} className="flex items-center gap-1">
+            <span className={cn("w-1.5 h-1.5 rounded-full", s.color)} />
+            {s.label}: {s.count}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// SKELETON LOADER (Step 6F)
+// ============================================================================
+function SkeletonCard() {
+  return (
+    <div className="p-4 rounded-lg bg-card border border-border animate-pulse">
+      <div className="flex gap-3">
+        <div className="w-14 h-14 rounded-lg skeleton-shimmer" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 w-3/4 rounded skeleton-shimmer" />
+          <div className="h-3 w-1/2 rounded skeleton-shimmer" />
+          <div className="h-3 w-full rounded skeleton-shimmer" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 export default function Home() {
   const [files, setFiles] = useState<File[]>([]);
   const [researchContext, setResearchContext] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<"idle" | "analyzing" | "searching" | "complete">("idle");
 
-  // DOI input states
+  // DOI
   const [dois, setDois] = useState<string[]>([]);
   const [currentDoi, setCurrentDoi] = useState("");
   const [doiArticles, setDoiArticles] = useState<any[]>([]);
   const [isFetchingDoi, setIsFetchingDoi] = useState(false);
 
-  // Expanded article state
+  // Expanded / copied
   const [expandedArticles, setExpandedArticles] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedDoiId, setCopiedDoiId] = useState<string | null>(null);
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => setIsDragging(false);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(f => f.type === "application/pdf");
-    if (files.length + droppedFiles.length > 4) {
-      alert("Maximum 4 example files allowed");
-      return;
-    }
-    setFiles(prev => [...prev, ...droppedFiles].slice(0, 4));
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const selected = Array.from(e.target.files).filter(f => f.type === "application/pdf");
-      if (files.length + selected.length > 4) {
-        alert("Maximum 4 example files allowed");
-        return;
-      }
-      setFiles(prev => [...prev, ...selected].slice(0, 4));
-    }
-  };
-
-  const removeFile = (index: number) => {
-    setFiles(files.filter((_, i) => i !== index));
-  };
-
-  // DOI input handlers
-  const addDoi = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && currentDoi.trim()) {
-      e.preventDefault();
-      if (dois.length >= 10) return;
-      const doiValue = currentDoi.trim();
-      // Basic DOI validation
-      if (!doiValue.includes("/")) {
-        alert("Please enter a valid DOI (e.g., 10.1234/abcd)");
-        return;
-      }
-      if (!dois.includes(doiValue)) {
-        setDois([...dois, doiValue]);
-      }
-      setCurrentDoi("");
-    }
-  };
-
-  const removeDoi = (doi: string) => {
-    setDois(dois.filter(d => d !== doi));
-  };
-
-  const fetchDoiInfo = async () => {
-    if (dois.length === 0) {
-      alert("Please add at least one DOI");
-      return;
-    }
-
-    setIsFetchingDoi(true);
-    try {
-      const res = await fetch("/api/fetch-doi", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dois }),
-      });
-
-      if (!res.ok) throw new Error("Failed to fetch DOI information");
-
-      const data = await res.json();
-      setDoiArticles(data.articles || []);
-    } catch (e) {
-      console.error(e);
-      alert("Error fetching DOI information. See console.");
-    } finally {
-      setIsFetchingDoi(false);
-    }
-  };
-
+  // Analysis
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "searching" | "complete">("idle");
 
-  // Research field selector
+  // Field
   const [researchField, setResearchField] = useState<string>("");
 
-  // Concept Anchor - locks a core term in all generated queries
+  // Concept anchor
   const [conceptAnchor, setConceptAnchor] = useState<string>("");
   const [anchorVariations, setAnchorVariations] = useState<string[]>([]);
   const [selectedVariations, setSelectedVariations] = useState<Set<string>>(new Set());
 
-  // Editable profile states
+  // Editable profile
   const [editingSummary, setEditingSummary] = useState(false);
   const [editingQueries, setEditingQueries] = useState(false);
   const [editingExclusion, setEditingExclusion] = useState(false);
   const [editedSummary, setEditedSummary] = useState("");
   const [editedQueries, setEditedQueries] = useState<string[]>([]);
   const [editedExclusion, setEditedExclusion] = useState<string[]>([]);
-  const [copiedDoiId, setCopiedDoiId] = useState<string | null>(null);
 
-  // Research field options (grouped by cluster)
-  const researchFields = [
-    { value: "", label: "All Fields" },
-    // Psychology Cluster
-    { value: "health-psychology", label: "Health Psychology" },
-    { value: "clinical-psychology", label: "Clinical Psychology" },
-    { value: "social-psychology", label: "Social Psychology" },
-    { value: "cognitive-psychology", label: "Cognitive Psychology" },
-    { value: "developmental-psychology", label: "Developmental Psychology" },
-    // Medical Cluster
-    { value: "neuroscience", label: "Neuroscience" },
-    { value: "psychiatry", label: "Psychiatry" },
-    { value: "behavioral-science", label: "Behavioral Science" },
-    { value: "public-health", label: "Public Health" },
-    { value: "medicine", label: "Medicine" },
-    // Business Cluster
-    { value: "marketing", label: "Marketing" },
-    { value: "business", label: "Business" },
-    { value: "management", label: "Management" },
-    // Other
-    { value: "education", label: "Education" },
-    { value: "computer-science", label: "Computer Science" },
-    { value: "economics", label: "Economics" },
-  ];
-
-  // Copy DOI URL handler
-  const copyDoiUrl = async (doi: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(`https://doi.org/${doi}`);
-      setCopiedDoiId(id);
-      setTimeout(() => setCopiedDoiId(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy DOI:', err);
-    }
-  };
-
-  // AIM Persona generation state
+  // Persona
   const [copiedPersona, setCopiedPersona] = useState(false);
   const [generatingPersona, setGeneratingPersona] = useState(false);
   const [generatedPersona, setGeneratedPersona] = useState<string | null>(null);
   const [showPersonaModal, setShowPersonaModal] = useState(false);
 
-  // Generate AIM Persona via LLM
-  const generatePersona = async () => {
-    setGeneratingPersona(true);
-    try {
-      const response = await fetch("/api/generate-persona", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          summary: editedSummary || analysisResult?.summary || "",
-          searchQueries: editedQueries.length > 0 ? editedQueries : (analysisResult?.searchQueries || []),
-          exclusionCriteria: editedExclusion.length > 0 ? editedExclusion : (analysisResult?.hallucinationFilter || []),
-          buzzwords: analysisResult?.buzzwords || [],
-          researchField: researchField ? researchFields.find(f => f.value === researchField)?.label : "Academic Research",
-          researchContext: researchContext,
-        }),
-      });
-
-      if (!response.ok) throw new Error("Failed to generate persona");
-
-      const data = await response.json();
-      setGeneratedPersona(data.persona);
-      setShowPersonaModal(true);
-    } catch (err) {
-      console.error('Failed to generate persona:', err);
-      alert("Error generating persona. Please try again.");
-    } finally {
-      setGeneratingPersona(false);
-    }
-  };
-
-  const copyPersona = async () => {
-    if (!generatedPersona) return;
-
-    // Try modern clipboard API first, then fallback for iOS
-    const copyToClipboard = async (text: string): Promise<boolean> => {
-      // Method 1: Modern Clipboard API
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        try {
-          await navigator.clipboard.writeText(text);
-          return true;
-        } catch (err) {
-          console.log('Clipboard API failed, trying fallback...');
-        }
-      }
-
-      // Method 2: Fallback for iOS and older browsers
-      try {
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-9999px';
-        textArea.style.top = '-9999px';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-
-        // iOS specific: need to select with setSelectionRange
-        textArea.focus();
-        textArea.setSelectionRange(0, text.length);
-
-        const success = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        return success;
-      } catch (err) {
-        console.error('Fallback copy failed:', err);
-        return false;
-      }
-    };
-
-    const success = await copyToClipboard(generatedPersona);
-    if (success) {
-      setCopiedPersona(true);
-      setTimeout(() => setCopiedPersona(false), 2000);
-    } else {
-      alert('Unable to copy. Please select the text manually and copy.');
-    }
-  };
-
-  // Google Scholar query generation state
-  interface ScholarQuery {
-    query: string;
-    purpose: string;
-    tips?: string;
-  }
+  // Scholar queries
+  interface ScholarQuery { query: string; purpose: string; tips?: string; }
   const [generatingScholarQueries, setGeneratingScholarQueries] = useState(false);
   const [scholarQueries, setScholarQueries] = useState<ScholarQuery[]>([]);
   const [showScholarModal, setShowScholarModal] = useState(false);
   const [copiedScholarQuery, setCopiedScholarQuery] = useState<number | null>(null);
 
-  // Generate Google Scholar queries
+  // Library
+  const [savedArticles, setSavedArticles] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"search" | "library">("search");
+
+  // Toast
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  };
+
+  // Research field options (grouped)
+  const researchFieldGroups = [
+    { label: "General", fields: [{ value: "", label: "All Fields" }] },
+    { label: "Psychology", fields: [
+      { value: "health-psychology", label: "Health Psychology" },
+      { value: "clinical-psychology", label: "Clinical Psychology" },
+      { value: "social-psychology", label: "Social Psychology" },
+      { value: "cognitive-psychology", label: "Cognitive Psychology" },
+      { value: "developmental-psychology", label: "Developmental Psychology" },
+    ]},
+    { label: "Clinical / Medical", fields: [
+      { value: "neuroscience", label: "Neuroscience" },
+      { value: "psychiatry", label: "Psychiatry" },
+      { value: "behavioral-science", label: "Behavioral Science" },
+      { value: "public-health", label: "Public Health" },
+      { value: "medicine", label: "Medicine" },
+    ]},
+    { label: "Business", fields: [
+      { value: "marketing", label: "Marketing" },
+      { value: "business", label: "Business" },
+      { value: "management", label: "Management" },
+    ]},
+    { label: "Other", fields: [
+      { value: "education", label: "Education" },
+      { value: "computer-science", label: "Computer Science" },
+      { value: "economics", label: "Economics" },
+    ]},
+  ];
+
+  const allFields = researchFieldGroups.flatMap(g => g.fields);
+
+  // ============================================================================
+  // HANDLERS
+  // ============================================================================
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = () => setIsDragging(false);
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(f => f.type === "application/pdf");
+    if (files.length + droppedFiles.length > 4) { alert("Maximum 4 example files allowed"); return; }
+    setFiles(prev => [...prev, ...droppedFiles].slice(0, 4));
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const selected = Array.from(e.target.files).filter(f => f.type === "application/pdf");
+      if (files.length + selected.length > 4) { alert("Maximum 4 example files allowed"); return; }
+      setFiles(prev => [...prev, ...selected].slice(0, 4));
+    }
+  };
+
+  const removeFile = (index: number) => setFiles(files.filter((_, i) => i !== index));
+
+  const addDoi = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && currentDoi.trim()) {
+      e.preventDefault();
+      if (dois.length >= 10) return;
+      const doiValue = currentDoi.trim();
+      if (!doiValue.includes("/")) { alert("Please enter a valid DOI (e.g., 10.1234/abcd)"); return; }
+      if (!dois.includes(doiValue)) setDois([...dois, doiValue]);
+      setCurrentDoi("");
+    }
+  };
+
+  const removeDoi = (doi: string) => setDois(dois.filter(d => d !== doi));
+
+  const fetchDoiInfo = async () => {
+    if (dois.length === 0) { alert("Please add at least one DOI"); return; }
+    setIsFetchingDoi(true);
+    try {
+      const res = await fetch("/api/fetch-doi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dois }) });
+      if (!res.ok) throw new Error("Failed to fetch DOI information");
+      const data = await res.json();
+      setDoiArticles(data.articles || []);
+    } catch (e) { console.error(e); alert("Error fetching DOI information."); }
+    finally { setIsFetchingDoi(false); }
+  };
+
+  const copyDoiUrl = async (doi: string, id: string) => {
+    try { await navigator.clipboard.writeText(`https://doi.org/${doi}`); setCopiedDoiId(id); setTimeout(() => setCopiedDoiId(null), 2000); }
+    catch (err) { console.error('Failed to copy DOI:', err); }
+  };
+
+  // Persona
+  const generatePersona = async () => {
+    setGeneratingPersona(true);
+    try {
+      const response = await fetch("/api/generate-persona", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: editedSummary || analysisResult?.summary || "",
+          searchQueries: editedQueries.length > 0 ? editedQueries : (analysisResult?.searchQueries || []),
+          exclusionCriteria: editedExclusion.length > 0 ? editedExclusion : (analysisResult?.hallucinationFilter || []),
+          buzzwords: analysisResult?.buzzwords || [],
+          researchField: researchField ? allFields.find(f => f.value === researchField)?.label : "Academic Research",
+          researchContext,
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to generate persona");
+      const data = await response.json();
+      setGeneratedPersona(data.persona);
+      setShowPersonaModal(true);
+    } catch (err) { console.error(err); alert("Error generating persona."); }
+    finally { setGeneratingPersona(false); }
+  };
+
+  const copyPersona = async () => {
+    if (!generatedPersona) return;
+    try { await navigator.clipboard.writeText(generatedPersona); setCopiedPersona(true); setTimeout(() => setCopiedPersona(false), 2000); }
+    catch { alert('Unable to copy.'); }
+  };
+
+  // Scholar queries
   const generateScholarQueries = async () => {
     setGeneratingScholarQueries(true);
-
-    // Create abort controller for timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
     try {
       const response = await fetch("/api/generate-scholar-queries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
+        method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
         body: JSON.stringify({
           summary: editedSummary || analysisResult?.summary || "",
           searchQueries: editedQueries.length > 0 ? editedQueries : (analysisResult?.searchQueries || []),
           buzzwords: analysisResult?.buzzwords || [],
           exclusionCriteria: editedExclusion.length > 0 ? editedExclusion : (analysisResult?.hallucinationFilter || []),
-          researchField: researchField ? researchFields.find(f => f.value === researchField)?.label : "Academic Research",
+          researchField: researchField ? allFields.find(f => f.value === researchField)?.label : "Academic Research",
         }),
       });
       clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server error: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error("Server error");
       const data = await response.json();
-
-      // Validate response structure
       if (data.success && Array.isArray(data.data?.queries) && data.data.queries.length > 0) {
-        // Filter to only valid queries with required fields
-        const validQueries = data.data.queries.filter(
-          (q: ScholarQuery) => q.query && q.purpose
-        );
-        if (validQueries.length > 0) {
-          setScholarQueries(validQueries);
-          setShowScholarModal(true);
-        } else {
-          throw new Error("No valid queries generated");
-        }
-      } else {
-        throw new Error("Invalid response from server");
-      }
-    } catch (err) {
-      console.error('Failed to generate Scholar queries:', err);
-      if (err instanceof Error && err.name === 'AbortError') {
-        alert("Request timed out. Please try again.");
-      } else {
-        alert(err instanceof Error ? err.message : "Error generating queries. Please try again.");
-      }
-    } finally {
-      setGeneratingScholarQueries(false);
-    }
+        const valid = data.data.queries.filter((q: ScholarQuery) => q.query && q.purpose);
+        if (valid.length > 0) { setScholarQueries(valid); setShowScholarModal(true); }
+        else throw new Error("No valid queries");
+      } else throw new Error("Invalid response");
+    } catch (err: any) {
+      if (err?.name === 'AbortError') alert("Request timed out.");
+      else alert(err?.message || "Error generating queries.");
+    } finally { setGeneratingScholarQueries(false); }
   };
 
   const copyScholarQuery = async (query: string, index: number) => {
-    try {
-      await navigator.clipboard.writeText(query);
-      setCopiedScholarQuery(index);
-      setTimeout(() => setCopiedScholarQuery(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy query:', err);
-    }
+    try { await navigator.clipboard.writeText(query); setCopiedScholarQuery(index); setTimeout(() => setCopiedScholarQuery(null), 2000); }
+    catch (err) { console.error(err); }
   };
 
   const openInScholar = (query: string) => {
-    const url = `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`;
-    window.open(url, '_blank');
+    window.open(`https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`, '_blank');
   };
 
-  // Initialize editable fields when analysis completes
+  // Initialize editable fields
   useEffect(() => {
     if (analysisResult) {
       setEditedSummary(analysisResult.summary || "");
@@ -335,21 +346,13 @@ export default function Home() {
     }
   }, [analysisResult]);
 
+  // Main analysis
   const startAnalysis = async () => {
-    // Check for any input: research context, files, pre-fetched DOIs, or raw DOIs
     const hasRawDois = dois.length > 0;
     const hasPreFetchedDois = doiArticles.length > 0;
     const hasDois = hasRawDois || hasPreFetchedDois;
-
-    if (!researchContext.trim() && files.length === 0 && !hasDois) {
-      alert("Please provide a research context and/or example articles (PDFs or DOIs).");
-      return;
-    }
-    // Research context alone is valid (will search based on context)
-    if (!researchContext.trim() && (files.length > 0 || hasDois)) {
-      alert("Please provide a research context to guide the analysis.");
-      return;
-    }
+    if (!researchContext.trim() && files.length === 0 && !hasDois) { alert("Please provide a research context and/or example articles."); return; }
+    if (!researchContext.trim() && (files.length > 0 || hasDois)) { alert("Please provide a research context."); return; }
 
     setStatus("analyzing");
     setAnalysisResult(null);
@@ -360,61 +363,32 @@ export default function Home() {
     files.forEach(f => formData.append("files", f));
     formData.append("researchContext", researchContext.trim());
     formData.append("researchField", researchField || "general");
-
-    // Include concept anchor if provided
     if (conceptAnchor.trim()) {
       formData.append("conceptAnchor", conceptAnchor.trim());
-      // Include selected variations
       const variations = Array.from(selectedVariations);
-      if (variations.length > 0) {
-        formData.append("anchorVariations", JSON.stringify(variations));
-      }
+      if (variations.length > 0) formData.append("anchorVariations", JSON.stringify(variations));
     }
-
-    // Include pre-fetched DOI articles if available
-    if (doiArticles.length > 0) {
-      formData.append("doiArticles", JSON.stringify(doiArticles));
-    }
-
-    // Include raw DOIs for auto-fetching (if not already pre-fetched)
-    // Only send DOIs that haven't been fetched yet
+    if (doiArticles.length > 0) formData.append("doiArticles", JSON.stringify(doiArticles));
     const preFetchedDoiSet = new Set(doiArticles.map(a => a.doi));
     const unfetchedDois = dois.filter(d => !preFetchedDoiSet.has(d));
-    if (unfetchedDois.length > 0) {
-      formData.append("rawDois", JSON.stringify(unfetchedDois));
-    }
+    if (unfetchedDois.length > 0) formData.append("rawDois", JSON.stringify(unfetchedDois));
 
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
-
+      const res = await fetch("/api/analyze", { method: "POST", body: formData });
       if (!res.ok) throw new Error("Analysis failed");
-
       const data = await res.json();
       setAnalysisResult(data.data);
       setStatus("complete");
-
-      // Set suggested variations if returned from API
-      if (data.suggestedVariations && Array.isArray(data.suggestedVariations)) {
-        setAnchorVariations(data.suggestedVariations);
-      }
-    } catch (e) {
-      console.error(e);
-      alert("Error analyzing files. See console.");
-      setStatus("idle");
-    }
+      if (data.suggestedVariations && Array.isArray(data.suggestedVariations)) setAnchorVariations(data.suggestedVariations);
+    } catch (e) { console.error(e); alert("Error analyzing files."); setStatus("idle"); }
   };
 
   const performSearch = async () => {
     if (!analysisResult) return;
-
     setSearchStatus("searching");
     try {
       const res = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           queries: editedQueries.length > 0 ? editedQueries : analysisResult.searchQueries,
           scopeSummary: editedSummary || analysisResult.summary,
@@ -423,261 +397,188 @@ export default function Home() {
           includePsychology: researchField.includes('psychology') || researchField === 'psychiatry'
         }),
       });
-
       const data = await res.json();
       setSearchResults(data.articles || []);
       setSearchStatus("complete");
-    } catch (e) {
-      console.error(e);
-      alert("Search failed");
-      setSearchStatus("idle");
-    }
+    } catch (e) { console.error(e); alert("Search failed"); setSearchStatus("idle"); }
   };
 
-  // State for Library
-  const [savedArticles, setSavedArticles] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"search" | "library">("search");
-
-  // Load from LocalStorage on mount
+  // Library persistence
   useEffect(() => {
     const saved = localStorage.getItem("research-app-library");
-    if (saved) {
-      try {
-        setSavedArticles(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to load library", e);
-      }
-    }
+    if (saved) { try { setSavedArticles(JSON.parse(saved)); } catch {} }
   }, []);
-
-  // Save to LocalStorage whenever library changes
-  useEffect(() => {
-    localStorage.setItem("research-app-library", JSON.stringify(savedArticles));
-  }, [savedArticles]);
+  useEffect(() => { localStorage.setItem("research-app-library", JSON.stringify(savedArticles)); }, [savedArticles]);
 
   const toggleSaveArticle = (article: any) => {
     const isSaved = savedArticles.some(a => a.id === article.id);
     if (isSaved) {
       setSavedArticles(prev => prev.filter(a => a.id !== article.id));
+      showToast("Removed from library");
     } else {
-      // Store only lightweight metadata
-      const lightweightArticle = {
-        id: article.id,
-        title: article.title,
-        link: article.link || article.id,
-        authors: article.authors,
-        published: article.published,
-        year: article.year,
-        summary: article.summary,
-        relevancyScore: article.relevancyScore,
-        relevancyReason: article.relevancyReason,
-        doi: article.doi || null,
-        source: article.source || 'arxiv',
-        savedAt: new Date().toISOString()
-      };
-      setSavedArticles(prev => [lightweightArticle, ...prev]);
+      setSavedArticles(prev => [{
+        id: article.id, title: article.title, link: article.link || article.id,
+        authors: article.authors, published: article.published, year: article.year,
+        summary: article.summary, relevancyScore: article.relevancyScore,
+        relevancyReason: article.relevancyReason, doi: article.doi || null,
+        source: article.source || 'arxiv', savedAt: new Date().toISOString()
+      }, ...prev]);
+      showToast("Saved to library");
     }
   };
 
   const toggleExpandArticle = (id: string) => {
-    const newExpanded = new Set(expandedArticles);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
-    setExpandedArticles(newExpanded);
+    const next = new Set(expandedArticles);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setExpandedArticles(next);
   };
 
   const copyToClipboard = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
+    try { await navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000); showToast("Copied!"); }
+    catch (err) { console.error(err); }
   };
 
-  // Token usage estimate
   const estimatedTokens = files.length * 2000 + doiArticles.length * 1500 + researchContext.length * 2;
 
+  // ============================================================================
+  // RENDER
+  // ============================================================================
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-50">
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Header */}
-        <header className="mb-10">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/25">
-              <BookOpen className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
-                Research Discovery Platform
-              </h1>
-              <p className="text-sm text-slate-600 mt-0.5">
-                AI-powered academic article discovery with context-aware relevancy scoring
-              </p>
-            </div>
-          </div>
-        </header>
-
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-2 mb-8 border-b border-slate-200">
-          <button
-            onClick={() => setActiveTab("search")}
-            className={cn(
-              "px-6 py-3 text-sm font-medium transition-all relative",
-              activeTab === "search"
-                ? "text-blue-700"
-                : "text-slate-600 hover:text-slate-900"
-            )}
-          >
-            Search & Analysis
-            {activeTab === "search" && (
-              <motion.div
-                layoutId="activeTab"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"
-                transition={{ type: "spring", stiffness: 500, damping: 30 }}
-              />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab("library")}
-            className={cn(
-              "px-6 py-3 text-sm font-medium transition-all relative flex items-center gap-2",
-              activeTab === "library"
-                ? "text-blue-700"
-                : "text-slate-600 hover:text-slate-900"
-            )}
-          >
-            Saved Library
-            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-              {savedArticles.length}
+    <main className="min-h-screen bg-background">
+      {/* HEADER BAR (Step 6F) */}
+      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold font-mono-accent tracking-tight text-foreground">
+              RESEARCHME
+            </h1>
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono-accent bg-primary/10 text-primary border border-primary/20">
+              v2.0
             </span>
-            {activeTab === "library" && (
-              <motion.div
-                layoutId="activeTab"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600"
-                transition={{ type: "spring", stiffness: 500, damping: 30 }}
-              />
-            )}
-          </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <button
+              onClick={() => setActiveTab("library")}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-mono-accent border transition-colors",
+                activeTab === "library"
+                  ? "border-primary text-primary bg-primary/10"
+                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+              )}
+            >
+              <Bookmark className="w-3.5 h-3.5" />
+              <span>{savedArticles.length}</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+        {/* TAB SYSTEM (Step 6F) */}
+        <div className="flex items-center gap-1 mb-6 border-b border-border">
+          {(["search", "library"] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={cn(
+                "px-4 py-2.5 text-sm font-medium transition-all relative font-mono-accent uppercase tracking-wider",
+                activeTab === tab ? "text-primary" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {tab === "search" ? "Research" : "Library"}
+              {activeTab === tab && (
+                <motion.div
+                  layoutId="activeTab"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                />
+              )}
+            </button>
+          ))}
         </div>
 
         {activeTab === "search" ? (
-          <div className="grid lg:grid-cols-[1.2fr_1fr] gap-8">
-            {/* Left Column: Inputs */}
-            <div className="space-y-6">
-              {/* STEP 1: Research Context - PRIMARY INPUT */}
+          <div className="grid lg:grid-cols-[1.2fr_1fr] gap-6">
+            {/* LEFT COLUMN: INPUTS */}
+            <div className="space-y-5">
+              {/* STEP 1: Research Context */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6"
+                className="bg-card rounded-xl border border-border p-5"
               >
-                <div className="flex items-start gap-3 mb-4">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-sm shrink-0">
-                    1
-                  </div>
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary text-primary-foreground font-bold text-xs font-mono-accent shrink-0">1</div>
                   <div className="flex-1">
-                    <label className="text-lg font-semibold text-slate-900 block mb-1">
-                      Research Context
-                    </label>
-                    <p className="text-sm text-slate-600 leading-relaxed">
-                      Describe your research scope or domain. This is the lens through which all articles will be evaluated for relevancy.
-                    </p>
+                    <label className="text-sm font-semibold text-foreground block mb-0.5">Research Context</label>
+                    <p className="text-xs text-muted-foreground">Describe your research scope — this is the lens for all evaluations.</p>
                   </div>
                 </div>
 
                 <textarea
                   value={researchContext}
                   onChange={(e) => setResearchContext(e.target.value)}
-                  placeholder="Example: Gender-based cognitive biases and heuristics in clinical decision making, focusing on diagnostic errors and treatment disparities in emergency medicine settings"
-                  rows={5}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none text-base"
+                  placeholder="Describe your research scope..."
+                  rows={4}
+                  className="w-full bg-secondary border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 transition-all resize-none text-sm font-mono-accent"
                 />
-
-                <div className="flex items-center justify-between mt-3 text-xs text-slate-500">
-                  <div className="flex items-center gap-1">
-                    <Info className="w-3.5 h-3.5" />
-                    <span>Be specific about your research domain and objectives</span>
-                  </div>
-                  <span className={cn(
-                    researchContext.length > 200 ? "text-green-600" : "text-slate-400"
-                  )}>
-                    {researchContext.length} characters
-                  </span>
+                <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground font-mono-accent">
+                  <span>Be specific about domain and objectives</span>
+                  <span className={researchContext.length > 200 ? "text-primary" : ""}>{researchContext.length} chars</span>
                 </div>
 
-                {/* Research Field Selector */}
-                <div className="mt-4 pt-4 border-t border-slate-100">
-                  <label className="text-sm font-medium text-slate-700 block mb-2">
-                    Research Field (optional)
-                  </label>
+                {/* Field Selector */}
+                <div className="mt-4 pt-4 border-t border-border">
+                  <label className="text-xs font-medium text-muted-foreground block mb-2 font-mono-accent uppercase tracking-wider">Research Field</label>
                   <select
                     value={researchField}
                     onChange={(e) => setResearchField(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm"
                   >
-                    {researchFields.map((field) => (
-                      <option key={field.value} value={field.value}>
-                        {field.label}
-                      </option>
+                    {researchFieldGroups.map(group => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.fields.map(field => (
+                          <option key={field.value} value={field.value}>{field.label}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
-                  <p className="text-xs text-slate-500 mt-1.5">
-                    Selecting a field helps focus searches on relevant databases and filters
-                  </p>
                 </div>
 
                 {/* Concept Anchor */}
-                <div className="mt-4 pt-4 border-t border-slate-100">
-                  <label className="text-sm font-medium text-slate-700 block mb-2">
-                    🔒 Concept Anchor (optional)
-                  </label>
+                <div className="mt-4 pt-4 border-t border-border">
+                  <label className="text-xs font-medium text-muted-foreground block mb-2 font-mono-accent uppercase tracking-wider">Concept Anchor</label>
                   <input
                     type="text"
                     value={conceptAnchor}
-                    onChange={(e) => {
-                      setConceptAnchor(e.target.value);
-                      setAnchorVariations([]);
-                      setSelectedVariations(new Set());
-                    }}
-                    placeholder='e.g., "stress", "anxiety", "mindfulness"...'
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    onChange={(e) => { setConceptAnchor(e.target.value); setAnchorVariations([]); setSelectedVariations(new Set()); }}
+                    placeholder='"stress", "anxiety", "mindfulness"...'
+                    className="w-full bg-secondary border border-border rounded-lg px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 text-sm font-mono-accent"
                   />
-                  <p className="text-xs text-slate-500 mt-1.5">
-                    Lock a core concept — all search queries will include this term or its variations
-                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1 font-mono-accent">Lock a core concept in all generated queries</p>
 
-                  {/* Variation suggestions - shown when anchor is entered */}
                   {conceptAnchor.trim().length > 2 && anchorVariations.length > 0 && (
-                    <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                      <p className="text-xs font-medium text-blue-700 mb-2">Suggested variations:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {anchorVariations.map((variation) => (
+                    <div className="mt-2 p-2.5 bg-primary/5 rounded-lg border border-primary/10">
+                      <p className="text-[10px] font-mono-accent text-primary mb-1.5 uppercase tracking-wider">Variations</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {anchorVariations.map(v => (
                           <button
-                            key={variation}
+                            key={v}
                             type="button"
-                            onClick={() => {
-                              setSelectedVariations(prev => {
-                                const newSet = new Set(prev);
-                                if (newSet.has(variation)) {
-                                  newSet.delete(variation);
-                                } else {
-                                  newSet.add(variation);
-                                }
-                                return newSet;
-                              });
-                            }}
+                            onClick={() => setSelectedVariations(prev => {
+                              const n = new Set(prev);
+                              n.has(v) ? n.delete(v) : n.add(v);
+                              return n;
+                            })}
                             className={cn(
-                              "px-2.5 py-1 text-xs rounded-full border transition-all",
-                              selectedVariations.has(variation)
-                                ? "bg-blue-600 text-white border-blue-600"
-                                : "bg-white text-blue-700 border-blue-200 hover:border-blue-400"
+                              "px-2 py-0.5 text-[10px] rounded-full border font-mono-accent transition-all",
+                              selectedVariations.has(v)
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "bg-secondary text-muted-foreground border-border hover:border-primary/50"
                             )}
                           >
-                            {selectedVariations.has(variation) ? "✓ " : ""}{variation}
+                            {selectedVariations.has(v) ? "* " : ""}{v}
                           </button>
                         ))}
                       </div>
@@ -686,34 +587,26 @@ export default function Home() {
                 </div>
               </motion.div>
 
-              {/* STEP 2: Example Articles - SECONDARY INPUT */}
+              {/* STEP 2: Example Articles */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 }}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6"
+                className="bg-card rounded-xl border border-border p-5"
               >
-                <div className="flex items-start gap-3 mb-4">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-slate-600 text-white font-bold text-sm shrink-0">
-                    2
-                  </div>
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="flex items-center justify-center w-7 h-7 rounded-md bg-secondary text-foreground font-bold text-xs font-mono-accent shrink-0">2</div>
                   <div className="flex-1">
-                    <label className="text-base font-semibold text-slate-900 block mb-1">
-                      Example Articles
-                    </label>
-                    <p className="text-sm text-slate-600">
-                      Upload representative PDFs or provide DOIs (max 4 examples)
-                    </p>
+                    <label className="text-sm font-semibold text-foreground block mb-0.5">Example Articles</label>
+                    <p className="text-xs text-muted-foreground">Upload PDFs or provide DOIs (max 4)</p>
                   </div>
                 </div>
 
-                {/* File Upload */}
+                {/* PDF Upload Zone */}
                 <div
                   className={cn(
-                    "relative group cursor-pointer border-2 border-dashed rounded-xl p-6 transition-all",
-                    isDragging
-                      ? "border-blue-500 bg-blue-50/50"
-                      : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/50",
+                    "relative group cursor-pointer border-2 border-dashed rounded-lg p-5 transition-all",
+                    isDragging ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground",
                     files.length >= 4 && "opacity-50 cursor-not-allowed"
                   )}
                   onDragOver={handleDragOver}
@@ -721,47 +614,30 @@ export default function Home() {
                   onDrop={handleDrop}
                   onClick={() => document.getElementById("file-upload")?.click()}
                 >
-                  <input
-                    type="file"
-                    id="file-upload"
-                    className="hidden"
-                    multiple
-                    accept=".pdf"
-                    onChange={handleFileSelect}
-                    disabled={files.length >= 4}
-                  />
-                  <div className="flex flex-col items-center justify-center text-center space-y-2">
-                    <div className="p-3 rounded-xl bg-slate-100 group-hover:bg-blue-50 transition-colors">
-                      <Upload className="w-5 h-5 text-slate-500 group-hover:text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-700 text-sm">Upload PDF files</p>
-                      <p className="text-xs text-slate-500 mt-0.5">or drag and drop here</p>
-                    </div>
+                  <input type="file" id="file-upload" className="hidden" multiple accept=".pdf" onChange={handleFileSelect} disabled={files.length >= 4} />
+                  <div className="flex flex-col items-center text-center space-y-1">
+                    <Upload className="w-5 h-5 text-muted-foreground" />
+                    <p className="text-xs font-mono-accent text-muted-foreground">
+                      {isDragging ? "DROP FILES" : "Upload PDF files or drag here"}
+                    </p>
                   </div>
                 </div>
 
-                {/* File List */}
+                {/* File Chips */}
                 <AnimatePresence>
                   {files.length > 0 && (
-                    <motion.div className="space-y-2 mt-4">
+                    <motion.div className="space-y-1.5 mt-3">
                       {files.map((file, i) => (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          key={i}
-                          className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-200 group hover:bg-slate-100"
+                        <motion.div key={i} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                          className="flex items-center justify-between p-2.5 rounded-lg bg-secondary border border-border group hover:border-muted-foreground"
                         >
-                          <div className="flex items-center space-x-3 overflow-hidden">
-                            <FileText className="w-4 h-4 text-blue-600 shrink-0" />
-                            <span className="text-sm text-slate-700 truncate">{file.name}</span>
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                            <span className="text-xs text-foreground truncate font-mono-accent">{file.name}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono-accent">{(file.size / 1024).toFixed(0)}KB</span>
                           </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); removeFile(i); }}
-                            className="p-1 hover:bg-red-100 rounded-md transition-colors"
-                          >
-                            <X className="w-4 h-4 text-slate-400 group-hover:text-red-600" />
+                          <button onClick={(e) => { e.stopPropagation(); removeFile(i); }} className="p-1 hover:bg-destructive/10 rounded transition-colors">
+                            <X className="w-3.5 h-3.5 text-muted-foreground group-hover:text-destructive" />
                           </button>
                         </motion.div>
                       ))}
@@ -770,203 +646,164 @@ export default function Home() {
                 </AnimatePresence>
 
                 {/* Divider */}
-                <div className="relative flex items-center justify-center py-4">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-slate-200"></div>
-                  </div>
-                  <div className="relative px-3 bg-white">
-                    <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">or</span>
-                  </div>
+                <div className="relative flex items-center justify-center py-3">
+                  <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
+                  <div className="relative px-3 bg-card"><span className="text-[10px] font-mono-accent text-muted-foreground uppercase">or DOI</span></div>
                 </div>
 
                 {/* DOI Input */}
-                <div className="space-y-3">
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={currentDoi}
-                      onChange={(e) => setCurrentDoi(e.target.value)}
-                      onKeyDown={addDoi}
-                      placeholder="Enter DOI (e.g., 10.1234/abcd) and press Enter"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 pl-10 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      disabled={dois.length >= 10}
-                    />
-                    <Hash className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-                  </div>
+                <div className="relative">
+                  <input
+                    type="text" value={currentDoi} onChange={(e) => setCurrentDoi(e.target.value)} onKeyDown={addDoi}
+                    placeholder="10.1234/abcd + Enter"
+                    className="w-full bg-secondary border border-border rounded-lg px-3 py-2 pl-8 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 text-xs font-mono-accent"
+                    disabled={dois.length >= 10}
+                  />
+                  <Hash className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-muted-foreground" />
+                </div>
 
-                  {/* DOI Chips */}
-                  <div className="flex flex-wrap gap-2">
+                {/* DOI Chips */}
+                {dois.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
                     <AnimatePresence>
-                      {dois.map((doi) => (
-                        <motion.span
-                          key={doi}
-                          initial={{ scale: 0.8, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          exit={{ scale: 0.8, opacity: 0 }}
-                          className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      {dois.map(doi => (
+                        <motion.span key={doi} initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.8, opacity: 0 }}
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono-accent bg-primary/10 text-primary border border-primary/20"
                         >
                           {doi}
-                          <button onClick={() => removeDoi(doi)} className="ml-2 hover:text-emerald-900">
-                            <X className="w-3 h-3" />
-                          </button>
+                          <button onClick={() => removeDoi(doi)} className="ml-1.5 hover:text-destructive"><X className="w-2.5 h-2.5" /></button>
                         </motion.span>
                       ))}
                     </AnimatePresence>
                   </div>
+                )}
 
-                  {/* Optional: Preview DOI Button */}
-                  {dois.length > 0 && doiArticles.length === 0 && (
-                    <div className="space-y-2">
-                      <button
-                        onClick={fetchDoiInfo}
-                        disabled={isFetchingDoi}
-                        className="w-full py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isFetchingDoi ? (
-                          <span className="flex items-center justify-center gap-2">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            Fetching preview...
-                          </span>
-                        ) : (
-                          "Preview DOIs (Optional)"
-                        )}
-                      </button>
-                      <p className="text-xs text-slate-400 text-center">
-                        DOIs will be auto-fetched when you generate the profile
-                      </p>
-                    </div>
-                  )}
+                {/* Fetch DOIs */}
+                {dois.length > 0 && doiArticles.length === 0 && (
+                  <button onClick={fetchDoiInfo} disabled={isFetchingDoi}
+                    className="mt-2 w-full py-2 rounded-lg border border-border bg-secondary hover:bg-muted text-muted-foreground text-xs font-mono-accent transition-colors disabled:opacity-50"
+                  >
+                    {isFetchingDoi ? (
+                      <span className="flex items-center justify-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />FETCHING...</span>
+                    ) : "PREVIEW DOIS"}
+                  </button>
+                )}
 
-                  {/* Fetched DOI Articles */}
-                  {doiArticles.length > 0 && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      className="space-y-2"
-                    >
-                      {doiArticles.map((article, i) => (
-                        <div
-                          key={i}
-                          className="p-3 rounded-lg bg-emerald-50 border border-emerald-200"
-                        >
-                          <div className="flex items-start gap-2">
-                            <FileText className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm text-slate-900 font-medium line-clamp-2">{article.title}</p>
-                              {article.authors && (
-                                <p className="text-xs text-slate-600 mt-1">{article.authors}</p>
-                              )}
-                            </div>
+                {/* Fetched DOI Preview */}
+                {doiArticles.length > 0 && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-1.5 mt-2">
+                    {doiArticles.map((article, i) => (
+                      <div key={i} className="p-2.5 rounded-lg bg-primary/5 border border-primary/10">
+                        <div className="flex items-start gap-2">
+                          <FileText className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-foreground font-medium line-clamp-2">{article.title}</p>
+                            {article.authors && <p className="text-[10px] text-muted-foreground mt-0.5">{article.authors}</p>}
                           </div>
                         </div>
-                      ))}
-                    </motion.div>
-                  )}
-                </div>
+                      </div>
+                    ))}
+                  </motion.div>
+                )}
               </motion.div>
 
-              {/* Analysis Button */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-              >
+              {/* CTA BUTTON */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
                 <button
                   onClick={startAnalysis}
                   disabled={status === "analyzing" || !researchContext.trim()}
-                  className="w-full py-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-base transition-all shadow-lg shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                  className="w-full py-3.5 rounded-xl bg-primary hover:brightness-110 text-primary-foreground font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed font-mono-accent uppercase tracking-wider"
                 >
                   {status === "analyzing" ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Analyzing examples...
-                    </span>
+                    <span className="flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />ANALYZING...</span>
                   ) : status === "complete" ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Sparkles className="w-5 h-5" />
-                      Regenerate Profile
-                    </span>
+                    <span className="flex items-center justify-center gap-2"><Sparkles className="w-4 h-4" />REGENERATE PROFILE</span>
                   ) : (
-                    <span className="flex items-center justify-center gap-2">
-                      <Sparkles className="w-5 h-5" />
-                      Generate Research Profile
-                    </span>
+                    <span className="flex items-center justify-center gap-2"><Sparkles className="w-4 h-4" />GENERATE RESEARCH PROFILE</span>
                   )}
                 </button>
-
-                {/* Token estimate */}
-                <div className="flex items-center justify-between mt-3 text-xs text-slate-500">
-                  <span>Estimated tokens: ~{estimatedTokens.toLocaleString()}</span>
-                  <span>{files.length + doiArticles.length} example(s) provided</span>
+                <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground font-mono-accent">
+                  <span>~{estimatedTokens.toLocaleString()} tokens</span>
+                  <span>{files.length + doiArticles.length} example(s)</span>
                 </div>
               </motion.div>
             </div>
 
-            {/* Right Column: Results */}
-            <div className="lg:sticky lg:top-8 h-fit">
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 min-h-[600px] flex flex-col">
+            {/* RIGHT COLUMN: RESULTS */}
+            <div className="lg:sticky lg:top-20 h-fit">
+              <div className="bg-card rounded-xl border border-border p-5 min-h-[500px] flex flex-col">
+                {/* IDLE STATE */}
                 {status === "idle" && !analysisResult && (
-                  <div className="flex-1 flex flex-col items-center justify-center text-slate-400 space-y-4">
-                    <div className="w-20 h-20 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center">
-                      <Search className="w-10 h-10" />
+                  <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground space-y-3">
+                    <div className="w-16 h-16 rounded-lg border-2 border-dashed border-border flex items-center justify-center">
+                      <Search className="w-8 h-8" />
                     </div>
                     <div className="text-center">
-                      <p className="font-medium text-slate-600">No analysis yet</p>
-                      <p className="text-sm text-slate-400 mt-1">Complete steps 1-2 and click "Generate Research Profile"</p>
+                      <p className="font-medium text-foreground text-sm">No analysis yet</p>
+                      <p className="text-xs text-muted-foreground mt-1 font-mono-accent">Complete steps 1-2 and generate</p>
                     </div>
                   </div>
                 )}
 
+                {/* LOADING STATE */}
+                {status === "analyzing" && (
+                  <div className="flex-1 flex flex-col items-center justify-center space-y-4">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                    <p className="text-sm font-mono-accent text-muted-foreground cursor-blink">ANALYZING</p>
+                  </div>
+                )}
+
                 {(status === "complete" || analysisResult) && analysisResult && (
-                  <div className="space-y-6 animate-in fade-in">
-                    {/* Research Context Summary (sticky) */}
+                  <div className="space-y-5 animate-in">
+                    {/* Active Context */}
                     {researchContext && (
-                      <div className="sticky top-0 bg-white/95 backdrop-blur-sm pb-4 border-b border-slate-100 -mx-6 px-6 -mt-6 pt-6 z-10">
+                      <div className="pb-3 border-b border-border">
                         <div className="flex items-start gap-2">
-                          <BookOpen className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                          <BookOpen className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
                           <div>
-                            <h4 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">Active Context</h4>
-                            <p className="text-sm text-slate-700 leading-relaxed line-clamp-2">{researchContext}</p>
+                            <h4 className="text-[10px] font-mono-accent text-muted-foreground uppercase tracking-wider mb-0.5">Active Context</h4>
+                            <p className="text-xs text-foreground leading-relaxed line-clamp-2">{researchContext}</p>
                           </div>
                         </div>
                       </div>
                     )}
 
-                    {/* Search Status */}
+                    {/* Search Loading */}
                     {searchStatus === "searching" && (
-                      <div className="flex flex-col items-center justify-center p-8 space-y-3">
-                        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-                        <p className="text-sm text-slate-600">Searching ArXiv, OpenAlex, Semantic Scholar, PubMed...</p>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-sm font-mono-accent text-muted-foreground">
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                          <span className="cursor-blink">SEARCHING 9 DATABASES</span>
+                        </div>
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
                       </div>
                     )}
 
-                    {/* SEARCH RESULTS - NOW ABOVE RESEARCH PROFILE */}
+                    {/* SEARCH RESULTS */}
                     {searchResults.length > 0 && (
-                      <div className="space-y-4 -mx-6 px-6 py-5 bg-gradient-to-b from-emerald-50/50 to-transparent border-y border-emerald-200">
+                      <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                            <Search className="w-5 h-5 text-emerald-600" />
-                            Discovered Articles
+                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 font-mono-accent uppercase tracking-wider">
+                            <Search className="w-4 h-4 text-primary" />
+                            Results
                           </h3>
-                          <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-sm font-semibold">{searchResults.length} results</span>
+                          <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-mono-accent">{searchResults.length}</span>
                         </div>
 
-                        {/* Scoring Summary Banner */}
-                        <div className="p-3 rounded-lg bg-gradient-to-r from-blue-50 to-emerald-50 border border-blue-200">
-                          <div className="flex items-center gap-4 text-xs">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-blue-700">DeepSeek Filter:</span>
-                              <span className="text-slate-600">Quick relevance check</span>
-                            </div>
-                            <span className="text-slate-300">→</span>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-emerald-700">GPT-4o-mini:</span>
-                              <span className="text-slate-600">Detailed scoring</span>
-                            </div>
-                          </div>
+                        <ScoreDistributionBar articles={searchResults} />
+
+                        {/* Pipeline info */}
+                        <div className="flex items-center gap-3 text-[10px] font-mono-accent text-muted-foreground py-1.5 px-2.5 rounded bg-secondary/50 border border-border">
+                          <span className="text-primary">PRE-FILTER</span>
+                          <span className="text-border">{">"}</span>
+                          <span className="text-accent">DEEPSEEK</span>
+                          <span className="text-border">{">"}</span>
+                          <span className="text-emerald-400">GPT-4o-mini</span>
                         </div>
 
-                        <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                        <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1 scrollbar-thin">
                           {searchResults.map((article) => {
                             const isSaved = savedArticles.some(a => a.id === article.id);
                             const isExpanded = expandedArticles.has(article.id);
@@ -974,181 +811,99 @@ export default function Home() {
                             return (
                               <motion.div
                                 key={article.id}
-                                initial={{ opacity: 0, y: 10 }}
+                                initial={{ opacity: 0, y: 8 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="group p-4 rounded-xl bg-white hover:shadow-md border border-slate-200 transition-all"
+                                className="group p-3 rounded-lg bg-card border border-border hover:border-primary/30 transition-all hover:border-l-2 hover:border-l-primary"
                               >
                                 <div className="flex gap-3">
-                                  {/* Relevancy Badge with Source Bonus */}
-                                  <div className="shrink-0">
-                                    <div className={cn(
-                                      "w-16 h-16 rounded-lg flex flex-col items-center justify-center text-xs font-bold relative",
-                                      article.relevancyScore >= 75
-                                        ? "bg-emerald-100 text-emerald-700 border-2 border-emerald-300"
-                                        : article.relevancyScore >= 50
-                                        ? "bg-amber-100 text-amber-700 border-2 border-amber-300"
-                                        : article.relevancyScore >= 25
-                                        ? "bg-orange-100 text-orange-700 border-2 border-orange-300"
-                                        : "bg-slate-100 text-slate-700 border-2 border-slate-300"
-                                    )}>
-                                      <span className="text-lg">{article.relevancyScore || 0}</span>
-                                      {/* Show source bonus if exists */}
-                                      {(article as any).scoring?.sourceBonus !== undefined && (article as any).scoring?.sourceBonus !== 0 ? (
-                                        <span className={cn(
-                                          "text-[8px] font-medium",
-                                          (article as any).scoring.sourceBonus > 0 ? "text-emerald-600" : "text-orange-600"
-                                        )}>
-                                          {(article as any).scoring.sourceBonus > 0 ? "+" : ""}{(article as any).scoring.sourceBonus} src
-                                        </span>
-                                      ) : (
-                                        <span className="text-[9px] opacity-70">
-                                          {article.relevancyScore >= 75 ? "HIGH" :
-                                           article.relevancyScore >= 50 ? "MED" :
-                                           article.relevancyScore >= 25 ? "LOW" : "MIN"}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
+                                  <ScoreBadge score={article.relevancyScore || 0} />
 
                                   <div className="flex-1 min-w-0">
-                                    {/* Title and metadata */}
-                                    <div className="mb-2">
-                                      <a
-                                        href={article.link || article.id}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="font-semibold text-slate-900 hover:text-blue-700 transition-colors inline-flex items-center gap-1.5 group/link"
-                                      >
-                                        <span className="line-clamp-2">{article.title}</span>
-                                        <ExternalLink className="w-3.5 h-3.5 opacity-0 group-hover/link:opacity-100 transition-opacity shrink-0" />
-                                      </a>
-                                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                        {/* Source Badge */}
-                                        <span className={cn(
-                                          "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide border",
-                                          article.source === 'arxiv' ? "bg-orange-50 text-orange-700 border-orange-200" :
-                                          article.source === 'openalex' ? "bg-blue-50 text-blue-700 border-blue-200" :
-                                          article.source === 'semantic-scholar' ? "bg-purple-50 text-purple-700 border-purple-200" :
-                                          article.source === 'pubmed' ? "bg-green-50 text-green-700 border-green-200" :
-                                          "bg-slate-50 text-slate-700 border-slate-200"
-                                        )}>
-                                          {article.source === 'semantic-scholar' ? 'S2' : article.source || 'ArXiv'}
-                                        </span>
-                                        <span className="text-xs text-slate-400">•</span>
-                                        <span className="text-xs text-slate-500">{article.year || new Date(article.published).getFullYear()}</span>
-                                        {article.authors && article.authors.length > 0 && (
-                                          <>
-                                            <span className="text-xs text-slate-400">•</span>
-                                            <span className="text-xs text-slate-500 truncate">{Array.isArray(article.authors) ? article.authors[0] : article.authors.split(',')[0]} et al.</span>
-                                          </>
-                                        )}
-                                      </div>
-                                      {/* DOI Display */}
-                                      {article.doi && (
-                                        <div className="mt-1.5 flex items-center gap-1.5">
-                                          <span className="text-[10px] text-slate-400 font-medium">DOI:</span>
-                                          <a
-                                            href={`https://doi.org/${article.doi}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-xs text-blue-600 hover:text-blue-800 font-mono truncate"
-                                          >
-                                            {article.doi}
-                                          </a>
-                                        </div>
+                                    <a
+                                      href={article.link || article.id}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-foreground hover:text-primary transition-colors text-sm inline-flex items-center gap-1 group/link"
+                                    >
+                                      <span className="line-clamp-2">{article.title}</span>
+                                      <ExternalLink className="w-3 h-3 opacity-0 group-hover/link:opacity-100 transition-opacity shrink-0" />
+                                    </a>
+
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                      {/* Source dot + label */}
+                                      <span className="inline-flex items-center gap-1">
+                                        <span className={cn("w-2 h-2 rounded-full", sourceDotColor(article.source))} />
+                                        <span className="text-[10px] font-mono-accent text-muted-foreground">{sourceLabel(article.source)}</span>
+                                      </span>
+                                      <span className="text-[10px] text-border">|</span>
+                                      <span className="text-[10px] text-muted-foreground font-mono-accent">{article.year || "N/A"}</span>
+                                      {article.authors && article.authors.length > 0 && (
+                                        <>
+                                          <span className="text-[10px] text-border">|</span>
+                                          <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">
+                                            {Array.isArray(article.authors) ? article.authors[0] : article.authors.split(',')[0]} et al.
+                                          </span>
+                                        </>
+                                      )}
+                                      {/* Score breakdown */}
+                                      {article.scoring?.sourceBonus !== undefined && article.scoring.sourceBonus !== 0 && (
+                                        <>
+                                          <span className="text-[10px] text-border">|</span>
+                                          <span className={cn(
+                                            "text-[10px] font-mono-accent",
+                                            article.scoring.sourceBonus > 0 ? "text-emerald-400" : "text-orange-400"
+                                          )}>
+                                            {article.scoring.sourceBonus > 0 ? "+" : ""}{article.scoring.sourceBonus} boost
+                                          </span>
+                                        </>
                                       )}
                                     </div>
 
-                                    {/* Relevancy reason from GPT-4o-mini */}
+                                    {article.doi && (
+                                      <div className="mt-1 flex items-center gap-1">
+                                        <span className="text-[10px] text-muted-foreground font-mono-accent">DOI:</span>
+                                        <a href={`https://doi.org/${article.doi}`} target="_blank" rel="noopener noreferrer"
+                                          className="text-[10px] text-accent hover:text-primary font-mono-accent truncate">{article.doi}</a>
+                                      </div>
+                                    )}
+
+                                    {/* Relevancy reason */}
                                     {article.relevancyReason && (
-                                      <div className="mb-3 p-2.5 rounded-lg bg-emerald-50/50 border border-emerald-100">
-                                        <p className="text-xs text-slate-700 leading-relaxed">
-                                          <span className="font-semibold text-emerald-700">Why: </span>
-                                          {article.relevancyReason}
+                                      <div className="mt-2 p-2 rounded bg-secondary/50 border border-border">
+                                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                          <span className="font-semibold text-primary">Why: </span>{article.relevancyReason}
                                         </p>
                                       </div>
                                     )}
 
-                                    {/* Abstract (expandable) */}
+                                    {/* Abstract */}
                                     {article.summary && (
-                                      <div>
-                                        <p className={cn(
-                                          "text-sm text-slate-600 leading-relaxed",
-                                          !isExpanded && "line-clamp-2"
-                                        )}>
-                                          {article.summary}
-                                        </p>
-                                        <button
-                                          onClick={() => toggleExpandArticle(article.id)}
-                                          className="mt-1.5 text-xs font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                                      <div className="mt-2">
+                                        <p className={cn("text-xs text-muted-foreground leading-relaxed", !isExpanded && "line-clamp-2")}>{article.summary}</p>
+                                        <button onClick={() => toggleExpandArticle(article.id)}
+                                          className="mt-1 text-[10px] font-mono-accent text-primary hover:text-accent flex items-center gap-0.5"
                                         >
-                                          {isExpanded ? (
-                                            <>Show less <ChevronUp className="w-3 h-3" /></>
-                                          ) : (
-                                            <>Show more <ChevronDown className="w-3 h-3" /></>
-                                          )}
+                                          {isExpanded ? <>LESS <ChevronUp className="w-3 h-3" /></> : <>MORE <ChevronDown className="w-3 h-3" /></>}
                                         </button>
                                       </div>
                                     )}
 
                                     {/* Actions */}
-                                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-200">
-                                      <button
-                                        onClick={() => toggleSaveArticle(article)}
-                                        className={cn(
-                                          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                                          isSaved
-                                            ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
-                                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                                        )}
-                                      >
-                                        {isSaved ? (
-                                          <>
-                                            <Bookmark className="w-3.5 h-3.5 fill-current" />
-                                            Saved
-                                          </>
-                                        ) : (
-                                          <>
-                                            <BookmarkPlus className="w-3.5 h-3.5" />
-                                            Save
-                                          </>
-                                        )}
+                                    <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border">
+                                      <button onClick={() => toggleSaveArticle(article)}
+                                        className={cn("flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent transition-colors active:scale-[0.98]",
+                                          isSaved ? "bg-primary/10 text-primary" : "bg-secondary text-muted-foreground hover:text-foreground"
+                                        )}>
+                                        {isSaved ? <><Bookmark className="w-3 h-3 fill-current" />SAVED</> : <><BookmarkPlus className="w-3 h-3" />SAVE</>}
                                       </button>
-
-                                      <button
-                                        onClick={() => copyToClipboard(article.title, article.id)}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                                      >
-                                        {copiedId === article.id ? (
-                                          <>
-                                            <Check className="w-3.5 h-3.5" />
-                                            Copied
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Copy className="w-3.5 h-3.5" />
-                                            Copy Title
-                                          </>
-                                        )}
+                                      <button onClick={() => copyToClipboard(article.title, article.id)}
+                                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent bg-secondary text-muted-foreground hover:text-foreground transition-colors active:scale-[0.98]">
+                                        {copiedId === article.id ? <><Check className="w-3 h-3" />OK</> : <><Copy className="w-3 h-3" />COPY</>}
                                       </button>
-
-                                      {/* Copy DOI Button */}
                                       {article.doi && (
-                                        <button
-                                          onClick={() => copyDoiUrl(article.doi, `doi-${article.id}`)}
-                                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                                        >
-                                          {copiedDoiId === `doi-${article.id}` ? (
-                                            <>
-                                              <Check className="w-3.5 h-3.5" />
-                                              Copied
-                                            </>
-                                          ) : (
-                                            <>
-                                              <Link2 className="w-3.5 h-3.5" />
-                                              Copy DOI
-                                            </>
-                                          )}
+                                        <button onClick={() => copyDoiUrl(article.doi, `doi-${article.id}`)}
+                                          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent bg-accent/10 text-accent hover:bg-accent/20 transition-colors active:scale-[0.98]">
+                                          {copiedDoiId === `doi-${article.id}` ? <><Check className="w-3 h-3" />OK</> : <><Link2 className="w-3 h-3" />DOI</>}
                                         </button>
                                       )}
                                     </div>
@@ -1161,194 +916,108 @@ export default function Home() {
                       </div>
                     )}
 
-                    {/* RESEARCH PROFILE - NOW BELOW SEARCH RESULTS */}
-                    <div className="space-y-3 pt-4 border-t border-slate-200">
+                    {/* RESEARCH PROFILE */}
+                    <div className="space-y-3 pt-4 border-t border-border">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-blue-600" />
-                          <h3 className="text-lg font-semibold text-slate-900">
-                            Research Profile
-                          </h3>
+                          <Sparkles className="w-4 h-4 text-primary" />
+                          <h3 className="text-sm font-semibold text-foreground font-mono-accent uppercase tracking-wider">Profile</h3>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {/* Export AIM Persona Button */}
-                          <button
-                            onClick={generatePersona}
-                            disabled={generatingPersona}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Generate AIM Persona for ChatGPT/Claude"
-                          >
-                            {generatingPersona ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Share2 className="w-3.5 h-3.5" />
-                            )}
-                            {generatingPersona ? "Generating..." : "Export Persona"}
+                        <div className="flex items-center gap-1">
+                          <button onClick={generatePersona} disabled={generatingPersona}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent text-primary hover:bg-primary/10 transition-colors disabled:opacity-50">
+                            {generatingPersona ? <Loader2 className="w-3 h-3 animate-spin" /> : <Share2 className="w-3 h-3" />}
+                            PERSONA
                           </button>
-                          {/* Google Scholar Queries Button */}
-                          <button
-                            onClick={generateScholarQueries}
-                            disabled={generatingScholarQueries}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-orange-600 hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Generate optimized Google Scholar search queries"
-                          >
-                            {generatingScholarQueries ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <GraduationCap className="w-3.5 h-3.5" />
-                            )}
-                            {generatingScholarQueries ? "Generating..." : "Scholar Queries"}
+                          <button onClick={generateScholarQueries} disabled={generatingScholarQueries}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent text-accent hover:bg-accent/10 transition-colors disabled:opacity-50">
+                            {generatingScholarQueries ? <Loader2 className="w-3 h-3 animate-spin" /> : <GraduationCap className="w-3 h-3" />}
+                            SCHOLAR
                           </button>
-                          {/* Edit Button */}
-                          <button
-                            onClick={() => {
-                              if (editingSummary) {
-                                setEditingSummary(false);
-                              } else {
-                                setEditingSummary(true);
-                              }
-                            }}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
-                          >
-                            {editingSummary ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-                            {editingSummary ? "Save" : "Edit"}
+                          <button onClick={() => setEditingSummary(!editingSummary)}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+                            {editingSummary ? <Save className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
+                            {editingSummary ? "SAVE" : "EDIT"}
                           </button>
                         </div>
                       </div>
-                      <div className="p-4 rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100">
+                      <div className="p-3 rounded-lg bg-secondary/50 border border-border">
                         {editingSummary ? (
-                          <textarea
-                            value={editedSummary}
-                            onChange={(e) => setEditedSummary(e.target.value)}
-                            rows={4}
-                            className="w-full bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                          />
+                          <textarea value={editedSummary} onChange={(e) => setEditedSummary(e.target.value)} rows={4}
+                            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 resize-none" />
                         ) : (
-                          <p className="text-sm text-slate-700 leading-relaxed">
-                            {editedSummary || analysisResult.summary}
-                          </p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{editedSummary || analysisResult.summary}</p>
                         )}
                       </div>
                     </div>
 
-                    {/* Generated Queries - Editable */}
-                    <div className="space-y-3">
+                    {/* QUERIES */}
+                    <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-slate-700">Search Queries Generated</h4>
-                        <button
-                          onClick={() => {
-                            if (editingQueries) {
-                              setEditingQueries(false);
-                            } else {
-                              setEditingQueries(true);
-                            }
-                          }}
-                          className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
-                        >
-                          {editingQueries ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-                          {editingQueries ? "Save" : "Edit"}
+                        <h4 className="text-[10px] font-mono-accent text-muted-foreground uppercase tracking-wider">Search Queries</h4>
+                        <button onClick={() => setEditingQueries(!editingQueries)}
+                          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+                          {editingQueries ? <Save className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
+                          {editingQueries ? "SAVE" : "EDIT"}
                         </button>
                       </div>
-                      <div className="grid gap-2">
+                      <div className="grid gap-1.5">
                         {(editingQueries ? editedQueries : (editedQueries.length > 0 ? editedQueries : analysisResult.searchQueries))?.map((q: string, i: number) => (
                           editingQueries ? (
-                            <input
-                              key={i}
-                              type="text"
-                              value={q}
-                              onChange={(e) => {
-                                const newQueries = [...editedQueries];
-                                newQueries[i] = e.target.value;
-                                setEditedQueries(newQueries);
-                              }}
-                              className="w-full px-3 py-2 rounded-lg bg-white border border-slate-300 text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
+                            <input key={i} type="text" value={q} onChange={(e) => { const n = [...editedQueries]; n[i] = e.target.value; setEditedQueries(n); }}
+                              className="w-full px-3 py-1.5 rounded bg-background border border-border text-[11px] font-mono-accent text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50" />
                           ) : (
-                            <div key={i} className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono text-slate-600">
-                              {q}
-                            </div>
+                            <div key={i} className="px-3 py-1.5 rounded bg-secondary border border-border text-[11px] font-mono-accent text-muted-foreground">{q}</div>
                           )
                         ))}
                         {editingQueries && (
-                          <button
-                            onClick={() => setEditedQueries([...editedQueries, ""])}
-                            className="px-3 py-2 rounded-lg border-2 border-dashed border-slate-300 text-xs text-slate-500 hover:border-blue-400 hover:text-blue-600 transition-colors"
-                          >
-                            + Add Query
+                          <button onClick={() => setEditedQueries([...editedQueries, ""])}
+                            className="px-3 py-1.5 rounded border-2 border-dashed border-border text-[10px] font-mono-accent text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+                            + ADD QUERY
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {/* Search Action */}
+                    {/* SEARCH BUTTON */}
                     {searchStatus === "idle" && (
-                      <button
-                        onClick={performSearch}
-                        className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors shadow-sm"
-                      >
-                        <span className="flex items-center justify-center gap-2">
-                          <Search className="w-4 h-4" />
-                          Search Academic Articles
-                        </span>
+                      <button onClick={performSearch}
+                        className="w-full py-3 rounded-lg bg-accent hover:brightness-110 text-accent-foreground font-semibold text-sm transition-colors active:scale-[0.98] font-mono-accent uppercase tracking-wider">
+                        <span className="flex items-center justify-center gap-2"><Search className="w-4 h-4" />SEARCH ACADEMIC ARTICLES</span>
                       </button>
                     )}
 
-                    {/* Exclusion Criteria - Editable */}
+                    {/* EXCLUSION CRITERIA */}
                     {(editedExclusion.length > 0 || (analysisResult.hallucinationFilter && analysisResult.hallucinationFilter.length > 0)) && (
-                      <div className="space-y-3 pt-4 border-t border-slate-200">
+                      <div className="space-y-2 pt-4 border-t border-border">
                         <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-semibold text-slate-700">Exclusion Criteria</h4>
-                          <button
-                            onClick={() => {
-                              if (editingExclusion) {
-                                setEditingExclusion(false);
-                              } else {
-                                setEditingExclusion(true);
-                              }
-                            }}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-blue-600 hover:bg-blue-50 transition-colors"
-                          >
-                            {editingExclusion ? <Save className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-                            {editingExclusion ? "Save" : "Edit"}
+                          <h4 className="text-[10px] font-mono-accent text-muted-foreground uppercase tracking-wider">Exclusion Criteria</h4>
+                          <button onClick={() => setEditingExclusion(!editingExclusion)}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+                            {editingExclusion ? <Save className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
+                            {editingExclusion ? "SAVE" : "EDIT"}
                           </button>
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           {(editingExclusion ? editedExclusion : (editedExclusion.length > 0 ? editedExclusion : analysisResult.hallucinationFilter)).map((f: string, i: number) => (
                             editingExclusion ? (
-                              <div key={i} className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={f}
-                                  onChange={(e) => {
-                                    const newExclusion = [...editedExclusion];
-                                    newExclusion[i] = e.target.value;
-                                    setEditedExclusion(newExclusion);
-                                  }}
-                                  className="flex-1 px-3 py-2 rounded-lg bg-white border border-red-200 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-red-400"
-                                />
-                                <button
-                                  onClick={() => {
-                                    const newExclusion = editedExclusion.filter((_, idx) => idx !== i);
-                                    setEditedExclusion(newExclusion);
-                                  }}
-                                  className="p-2 rounded-lg hover:bg-red-100 text-red-500"
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
+                              <div key={i} className="flex items-center gap-1.5">
+                                <input type="text" value={f} onChange={(e) => { const n = [...editedExclusion]; n[i] = e.target.value; setEditedExclusion(n); }}
+                                  className="flex-1 px-3 py-1.5 rounded bg-background border border-destructive/30 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-destructive/50" />
+                                <button onClick={() => setEditedExclusion(editedExclusion.filter((_, idx) => idx !== i))}
+                                  className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><X className="w-3.5 h-3.5" /></button>
                               </div>
                             ) : (
-                              <div key={i} className="flex items-start gap-3 text-sm text-slate-600 p-3 rounded-lg bg-red-50 border border-red-100">
-                                <div className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 shrink-0" />
+                              <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground p-2 rounded bg-destructive/5 border border-destructive/10">
+                                <span className="w-1.5 h-1.5 rounded-full bg-destructive mt-1 shrink-0" />
                                 <span className="flex-1">{f}</span>
                               </div>
                             )
                           ))}
                           {editingExclusion && (
-                            <button
-                              onClick={() => setEditedExclusion([...editedExclusion, ""])}
-                              className="w-full px-3 py-2 rounded-lg border-2 border-dashed border-red-200 text-xs text-red-500 hover:border-red-400 hover:text-red-600 transition-colors"
-                            >
-                              + Add Exclusion Criterion
+                            <button onClick={() => setEditedExclusion([...editedExclusion, ""])}
+                              className="w-full px-3 py-1.5 rounded border-2 border-dashed border-destructive/20 text-[10px] font-mono-accent text-destructive hover:border-destructive/50 transition-colors">
+                              + ADD EXCLUSION
                             </button>
                           )}
                         </div>
@@ -1360,184 +1029,88 @@ export default function Home() {
             </div>
           </div>
         ) : (
-          // Library View
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="max-w-5xl mx-auto"
-          >
+          /* LIBRARY VIEW */
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-5xl mx-auto">
             {savedArticles.length === 0 ? (
-              <div className="text-center py-20 bg-white rounded-2xl border border-slate-200">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
-                  <BookmarkPlus className="w-8 h-8 text-slate-400" />
+              <div className="text-center py-20 bg-card rounded-xl border border-border">
+                <div className="w-14 h-14 mx-auto mb-3 rounded-lg bg-secondary flex items-center justify-center">
+                  <BookmarkPlus className="w-7 h-7 text-muted-foreground" />
                 </div>
-                <h3 className="text-lg font-semibold text-slate-900 mb-2">Your library is empty</h3>
-                <p className="text-slate-600 text-sm">Save articles from your search results to build your research library</p>
+                <h3 className="text-sm font-semibold text-foreground mb-1 font-mono-accent">EMPTY LIBRARY</h3>
+                <p className="text-xs text-muted-foreground">Save articles from search results</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl font-bold text-slate-900">Saved Articles</h2>
-                  <span className="text-sm text-slate-600">{savedArticles.length} article{savedArticles.length !== 1 ? 's' : ''}</span>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-foreground font-mono-accent uppercase tracking-wider">Saved Articles</h2>
+                  <span className="text-xs text-muted-foreground font-mono-accent">{savedArticles.length} article{savedArticles.length !== 1 ? 's' : ''}</span>
                 </div>
 
                 {savedArticles.map((article) => {
                   const isExpanded = expandedArticles.has(article.id);
-
                   return (
-                    <motion.div
-                      key={article.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="bg-white rounded-xl border border-slate-200 p-6 hover:shadow-md transition-shadow"
+                    <motion.div key={article.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                      className="bg-card rounded-lg border border-border p-4 hover:border-primary/30 transition-all"
                     >
-                      <div className="flex gap-4">
-                        {/* Relevancy Badge */}
-                        <div className="shrink-0">
-                          <div className={cn(
-                            "w-14 h-14 rounded-xl flex flex-col items-center justify-center text-sm font-bold",
-                            article.relevancyScore > 75
-                              ? "bg-emerald-100 text-emerald-700 border-2 border-emerald-300"
-                              : article.relevancyScore > 50
-                              ? "bg-amber-100 text-amber-700 border-2 border-amber-300"
-                              : "bg-slate-100 text-slate-700 border-2 border-slate-300"
-                          )}>
-                            <span className="text-xl">{article.relevancyScore || 0}</span>
-                            <span className="text-[10px] opacity-70">MATCH</span>
-                          </div>
-                        </div>
-
+                      <div className="flex gap-3">
+                        <ScoreBadge score={article.relevancyScore || 0} />
                         <div className="flex-1 min-w-0">
-                          {/* Title and metadata */}
-                          <div className="mb-3">
-                            <a
-                              href={article.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xl font-semibold text-slate-900 hover:text-blue-700 transition-colors inline-flex items-center gap-2 group/link"
-                            >
-                              <span>{article.title}</span>
-                              <ExternalLink className="w-4 h-4 opacity-0 group-hover/link:opacity-100 transition-opacity shrink-0" />
-                            </a>
-                            <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              {/* Source Badge */}
-                              {article.source && (
-                                <span className={cn(
-                                  "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide border",
-                                  article.source === 'arxiv' ? "bg-orange-50 text-orange-700 border-orange-200" :
-                                  article.source === 'openalex' ? "bg-blue-50 text-blue-700 border-blue-200" :
-                                  article.source === 'semantic-scholar' ? "bg-purple-50 text-purple-700 border-purple-200" :
-                                  article.source === 'pubmed' ? "bg-green-50 text-green-700 border-green-200" :
-                                  "bg-slate-50 text-slate-700 border-slate-200"
-                                )}>
-                                  {article.source === 'semantic-scholar' ? 'S2' : article.source}
-                                </span>
-                              )}
-                              <span className="text-xs text-slate-400">•</span>
-                              <span className="text-sm text-slate-500">Saved {new Date(article.savedAt).toLocaleDateString()}</span>
-                              <span className="text-xs text-slate-400">•</span>
-                              <span className="text-sm text-slate-500">{article.year || new Date(article.published).getFullYear()}</span>
-                              {article.authors && (
-                                <>
-                                  <span className="text-xs text-slate-400">•</span>
-                                  <span className="text-sm text-slate-500 truncate">{Array.isArray(article.authors) ? article.authors[0] : article.authors.split(',')[0]} et al.</span>
-                                </>
-                              )}
-                            </div>
+                          <a href={article.link} target="_blank" rel="noopener noreferrer"
+                            className="font-medium text-foreground hover:text-primary transition-colors text-sm inline-flex items-center gap-1 group/link">
+                            <span className="line-clamp-2">{article.title}</span>
+                            <ExternalLink className="w-3 h-3 opacity-0 group-hover/link:opacity-100 transition-opacity shrink-0" />
+                          </a>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {article.source && (
+                              <span className="inline-flex items-center gap-1">
+                                <span className={cn("w-2 h-2 rounded-full", sourceDotColor(article.source))} />
+                                <span className="text-[10px] font-mono-accent text-muted-foreground">{sourceLabel(article.source)}</span>
+                              </span>
+                            )}
+                            <span className="text-[10px] text-border">|</span>
+                            <span className="text-[10px] text-muted-foreground font-mono-accent">{article.year || "N/A"}</span>
+                            <span className="text-[10px] text-border">|</span>
+                            <span className="text-[10px] text-muted-foreground font-mono-accent">Saved {new Date(article.savedAt).toLocaleDateString()}</span>
                           </div>
 
-                          {/* Relevancy reason */}
                           {article.relevancyReason && (
-                            <div className="mb-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
-                              <p className="text-sm text-slate-700 italic leading-relaxed">
-                                <span className="font-semibold text-blue-700">Why it matches: </span>
-                                {article.relevancyReason}
-                              </p>
+                            <div className="mt-2 p-2 rounded bg-secondary/50 border border-border">
+                              <p className="text-[11px] text-muted-foreground"><span className="font-semibold text-primary">Why: </span>{article.relevancyReason}</p>
                             </div>
                           )}
 
-                          {/* Abstract */}
                           {article.summary && (
-                            <div className="mb-3">
-                              <p className={cn(
-                                "text-sm text-slate-600 leading-relaxed",
-                                !isExpanded && "line-clamp-3"
-                              )}>
-                                {article.summary}
-                              </p>
-                              <button
-                                onClick={() => toggleExpandArticle(article.id)}
-                                className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                              >
-                                {isExpanded ? (
-                                  <>Show less <ChevronUp className="w-3 h-3" /></>
-                                ) : (
-                                  <>Read full abstract <ChevronDown className="w-3 h-3" /></>
-                                )}
+                            <div className="mt-2">
+                              <p className={cn("text-xs text-muted-foreground leading-relaxed", !isExpanded && "line-clamp-2")}>{article.summary}</p>
+                              <button onClick={() => toggleExpandArticle(article.id)}
+                                className="mt-1 text-[10px] font-mono-accent text-primary hover:text-accent flex items-center gap-0.5">
+                                {isExpanded ? <>LESS <ChevronUp className="w-3 h-3" /></> : <>MORE <ChevronDown className="w-3 h-3" /></>}
                               </button>
                             </div>
                           )}
 
-                          {/* DOI */}
                           {article.doi && (
-                            <div className="flex items-center gap-2 mb-3">
-                              <span className="text-xs text-slate-500 font-medium">DOI:</span>
-                              <a
-                                href={`https://doi.org/${article.doi}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs text-blue-600 hover:text-blue-800 font-mono bg-slate-50 px-2 py-1 rounded border border-slate-200 hover:border-blue-300 transition-colors"
-                              >
-                                {article.doi}
-                              </a>
+                            <div className="mt-1 flex items-center gap-1">
+                              <span className="text-[10px] text-muted-foreground font-mono-accent">DOI:</span>
+                              <a href={`https://doi.org/${article.doi}`} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] text-accent font-mono-accent">{article.doi}</a>
                             </div>
                           )}
 
-                          {/* Actions */}
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <button
-                              onClick={() => copyToClipboard(article.title, article.id)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
-                            >
-                              {copiedId === article.id ? (
-                                <>
-                                  <Check className="w-3.5 h-3.5" />
-                                  Copied
-                                </>
-                              ) : (
-                                <>
-                                  <Copy className="w-3.5 h-3.5" />
-                                  Copy Title
-                                </>
-                              )}
+                          <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border">
+                            <button onClick={() => copyToClipboard(article.title, article.id)}
+                              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent bg-secondary text-muted-foreground hover:text-foreground transition-colors active:scale-[0.98]">
+                              {copiedId === article.id ? <><Check className="w-3 h-3" />OK</> : <><Copy className="w-3 h-3" />COPY</>}
                             </button>
-
-                            {/* Copy DOI Button */}
                             {article.doi && (
-                              <button
-                                onClick={() => copyDoiUrl(article.doi, `lib-doi-${article.id}`)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                              >
-                                {copiedDoiId === `lib-doi-${article.id}` ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5" />
-                                    Copied
-                                  </>
-                                ) : (
-                                  <>
-                                    <Link2 className="w-3.5 h-3.5" />
-                                    Copy DOI
-                                  </>
-                                )}
+                              <button onClick={() => copyDoiUrl(article.doi, `lib-doi-${article.id}`)}
+                                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent bg-accent/10 text-accent hover:bg-accent/20 transition-colors active:scale-[0.98]">
+                                {copiedDoiId === `lib-doi-${article.id}` ? <><Check className="w-3 h-3" />OK</> : <><Link2 className="w-3 h-3" />DOI</>}
                               </button>
                             )}
-
-                            <button
-                              onClick={() => toggleSaveArticle(article)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                              Remove
+                            <button onClick={() => toggleSaveArticle(article)}
+                              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono-accent bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors active:scale-[0.98]">
+                              <X className="w-3 h-3" />REMOVE
                             </button>
                           </div>
                         </div>
@@ -1551,76 +1124,31 @@ export default function Home() {
         )}
       </div>
 
-      {/* AIM Persona Modal */}
+      {/* PERSONA MODAL */}
       <AnimatePresence>
         {showPersonaModal && generatedPersona && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowPersonaModal(false)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
-                    <Share2 className="w-5 h-5 text-emerald-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-900">AIM Research Persona</h3>
-                    <p className="text-sm text-slate-500">Copy and paste into ChatGPT, Claude, or any AI assistant</p>
-                  </div>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowPersonaModal(false)}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-card rounded-xl border border-border shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <Share2 className="w-4 h-4 text-primary" />
+                  <h3 className="text-sm font-semibold text-foreground font-mono-accent">AIM RESEARCH PERSONA</h3>
                 </div>
-                <button
-                  onClick={() => setShowPersonaModal(false)}
-                  className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                >
-                  <X className="w-5 h-5 text-slate-500" />
-                </button>
+                <button onClick={() => setShowPersonaModal(false)} className="p-1.5 rounded hover:bg-secondary"><X className="w-4 h-4 text-muted-foreground" /></button>
               </div>
-
-              {/* Modal Body - Persona Content */}
-              <div className="p-6 overflow-y-auto max-h-[50vh]">
-                <pre className="whitespace-pre-wrap text-sm text-slate-700 font-mono bg-slate-50 rounded-xl p-4 border border-slate-200 leading-relaxed">
-                  {generatedPersona}
-                </pre>
+              <div className="p-5 overflow-y-auto max-h-[50vh]">
+                <pre className="whitespace-pre-wrap text-xs text-foreground font-mono-accent bg-secondary rounded-lg p-4 border border-border leading-relaxed">{generatedPersona}</pre>
               </div>
-
-              {/* Modal Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 bg-slate-50">
-                <p className="text-xs text-slate-500">
-                  Generated based on your research profile
-                </p>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setShowPersonaModal(false)}
-                    className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={copyPersona}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-                  >
-                    {copiedPersona ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        Copied!
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        Copy to Clipboard
-                      </>
-                    )}
+              <div className="flex items-center justify-between px-5 py-3 border-t border-border">
+                <p className="text-[10px] text-muted-foreground font-mono-accent">Copy and paste into any AI assistant</p>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowPersonaModal(false)} className="px-3 py-1.5 rounded text-xs font-mono-accent text-muted-foreground hover:bg-secondary">CLOSE</button>
+                  <button onClick={copyPersona} className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono-accent bg-primary text-primary-foreground hover:brightness-110 active:scale-[0.98]">
+                    {copiedPersona ? <><Check className="w-3.5 h-3.5" />COPIED</> : <><Copy className="w-3.5 h-3.5" />COPY</>}
                   </button>
                 </div>
               </div>
@@ -1629,98 +1157,64 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* Google Scholar Queries Modal */}
+      {/* SCHOLAR QUERIES MODAL */}
       <AnimatePresence>
         {showScholarModal && scholarQueries.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowScholarModal(false)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-orange-50 to-amber-50">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center">
-                    <GraduationCap className="w-5 h-5 text-orange-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-900">Google Scholar Queries</h3>
-                    <p className="text-sm text-slate-500">Optimized search queries for Google Scholar</p>
-                  </div>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowScholarModal(false)}>
+            <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-card rounded-xl border border-border shadow-2xl max-w-3xl w-full max-h-[80vh] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <GraduationCap className="w-4 h-4 text-accent" />
+                  <h3 className="text-sm font-semibold text-foreground font-mono-accent">GOOGLE SCHOLAR QUERIES</h3>
                 </div>
-                <button
-                  onClick={() => setShowScholarModal(false)}
-                  className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
-                >
-                  <X className="w-5 h-5 text-slate-500" />
-                </button>
+                <button onClick={() => setShowScholarModal(false)} className="p-1.5 rounded hover:bg-secondary"><X className="w-4 h-4 text-muted-foreground" /></button>
               </div>
-
-              {/* Modal Body - Query List */}
-              <div className="p-6 overflow-y-auto max-h-[50vh] space-y-4">
+              <div className="p-5 overflow-y-auto max-h-[50vh] space-y-3">
                 {scholarQueries.map((item, index) => (
-                  <div key={index} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                  <div key={index} className="bg-secondary rounded-lg p-3 border border-border">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <code className="block text-sm text-slate-800 font-mono bg-white rounded-lg p-3 border border-slate-200 break-all">
-                          {item.query}
-                        </code>
-                        <p className="mt-2 text-sm text-slate-600">
-                          <span className="font-medium">Purpose:</span> {item.purpose}
-                        </p>
-                        {item.tips && (
-                          <p className="mt-1 text-xs text-slate-500 italic">
-                            Tip: {item.tips}
-                          </p>
-                        )}
+                        <code className="block text-xs text-foreground font-mono-accent bg-background rounded p-2 border border-border break-all">{item.query}</code>
+                        <p className="mt-1.5 text-[11px] text-muted-foreground"><span className="font-medium">Purpose:</span> {item.purpose}</p>
+                        {item.tips && <p className="mt-0.5 text-[10px] text-muted-foreground italic">Tip: {item.tips}</p>}
                       </div>
-                      <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() => copyScholarQuery(item.query, index)}
-                          className="p-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 transition-colors"
-                          title="Copy query"
-                        >
-                          {copiedScholarQuery === index ? (
-                            <Check className="w-4 h-4 text-green-600" />
-                          ) : (
-                            <Copy className="w-4 h-4 text-slate-600" />
-                          )}
+                      <div className="flex flex-col gap-1.5">
+                        <button onClick={() => copyScholarQuery(item.query, index)}
+                          className="p-1.5 rounded bg-background border border-border hover:bg-muted transition-colors" title="Copy">
+                          {copiedScholarQuery === index ? <Check className="w-3.5 h-3.5 text-primary" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
                         </button>
-                        <button
-                          onClick={() => openInScholar(item.query)}
-                          className="p-2 rounded-lg bg-orange-100 hover:bg-orange-200 transition-colors"
-                          title="Open in Google Scholar"
-                        >
-                          <ExternalLink className="w-4 h-4 text-orange-600" />
+                        <button onClick={() => openInScholar(item.query)}
+                          className="p-1.5 rounded bg-background border border-border hover:bg-muted transition-colors" title="Open in Scholar">
+                          <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
                         </button>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
-
-              {/* Modal Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 bg-slate-50">
-                <p className="text-xs text-slate-500">
-                  Click the arrow to open directly in Google Scholar
-                </p>
-                <button
-                  onClick={() => setShowScholarModal(false)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-                >
-                  Close
-                </button>
+              <div className="px-5 py-3 border-t border-border">
+                <button onClick={() => setShowScholarModal(false)}
+                  className="w-full py-2 rounded text-xs font-mono-accent text-muted-foreground hover:bg-secondary transition-colors">CLOSE</button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TOAST NOTIFICATION */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, x: 20 }}
+            animate={{ opacity: 1, y: 0, x: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-4 right-4 z-50 px-4 py-2 rounded-lg bg-card border border-primary/30 shadow-lg"
+          >
+            <p className="text-xs font-mono-accent text-primary">{toast}</p>
           </motion.div>
         )}
       </AnimatePresence>

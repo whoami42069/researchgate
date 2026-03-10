@@ -22,8 +22,31 @@
   --color-ring: hsl(var(--ring));
 }
 
+/* Dark theme (default) — Bloomberg terminal aesthetic */
 :root {
-  /* Light, professional color scheme */
+  --background: 220 20% 8%;
+  --foreground: 210 20% 90%;
+  --card: 220 18% 11%;
+  --card-foreground: 210 20% 90%;
+  --popover: 220 18% 11%;
+  --popover-foreground: 210 20% 90%;
+  --primary: 160 80% 55%;
+  --primary-foreground: 220 20% 8%;
+  --secondary: 220 15% 16%;
+  --secondary-foreground: 210 20% 85%;
+  --muted: 220 15% 20%;
+  --muted-foreground: 215 16% 55%;
+  --accent: 190 80% 50%;
+  --accent-foreground: 220 20% 8%;
+  --destructive: 0 70% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 15% 18%;
+  --input: 220 15% 16%;
+  --ring: 160 80% 55%;
+}
+
+/* Light theme (toggle) — professional slate/blue */
+.light {
   --background: 0 0% 100%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
@@ -31,7 +54,6 @@
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
   --primary: 217 91% 60%;
-  /* Professional Blue */
   --primary-foreground: 0 0% 100%;
   --secondary: 210 40% 96%;
   --secondary-foreground: 222 47% 11%;
@@ -56,19 +78,18 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  /* Better focus states for accessibility */
   button:focus-visible,
   a:focus-visible,
   input:focus-visible,
   textarea:focus-visible {
-    @apply outline-none ring-2 ring-blue-500 ring-offset-2;
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
 
-/* Custom scrollbar for webkit browsers */
+/* Custom scrollbar */
 .scrollbar-thin::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
@@ -76,12 +97,12 @@
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgb(203 213 225);
-  border-radius: 4px;
+  background: hsl(var(--muted));
+  border-radius: 3px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: rgb(148 163 184);
+  background: hsl(var(--muted-foreground));
 }
 
 /* Smooth animations */
@@ -94,14 +115,13 @@
     opacity: 0;
     transform: translateY(12px);
   }
-
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
-/* Line clamping utilities */
+/* Line clamping */
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -116,13 +136,47 @@
   overflow: hidden;
 }
 
-/* Professional shadows */
-.shadow-professional {
-  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
-/* Academic-style focus states */
-.focus-academic:focus {
-  outline: 2px solid rgb(59 130 246);
-  outline-offset: 2px;
+.cursor-blink::after {
+  content: "█";
+  animation: blink 1s step-end infinite;
+  color: hsl(var(--primary));
+  font-size: 0.875em;
+}
+
+/* Dark shimmer skeleton */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--secondary)) 25%,
+    hsl(var(--muted)) 50%,
+    hsl(var(--secondary)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Score glow effects */
+.glow-green {
+  box-shadow: 0 0 12px 2px rgba(52, 211, 153, 0.3);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 8px 1px rgba(34, 211, 238, 0.2);
+}
+
+/* Monospace accent utility */
+.font-mono-accent {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }

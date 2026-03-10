@@ -4,6 +4,8 @@
 // Pattern: Dual-LLM Query Generation + DeepSeek Filter + GPT-mini Scoring
 // ============================================================================
 
+import { tokenizeForRelevancy, jaccardSimilarity } from "@/lib/text-utils";
+
 // ============================================================================
 // QUERY GENERATION PROMPT (GPT-4o-mini) - Enhanced with few-shot examples
 // ============================================================================
@@ -1310,16 +1312,71 @@ export function buildQuickFilterPrompt(
     return { systemPrompt, userPrompt };
 }
 
+// ============================================================================
+// STEP 4: Dynamic Calibration Anchors
+// ============================================================================
+
+export interface CalibrationAnchors {
+    high: { title: string; summary: string; overlap: number };
+    medium: { title: string; summary: string; overlap: number };
+    low: { title: string; summary: string; overlap: number };
+}
+
+/**
+ * Picks HIGH/MEDIUM/LOW anchor articles by keyword overlap with scopeSummary.
+ * Returns null if fewer than 6 candidates (not enough diversity).
+ */
+export function selectCalibrationAnchors(
+    scopeSummary: string,
+    candidates: ArticleCandidate[]
+): CalibrationAnchors | null {
+    if (candidates.length < 6) return null;
+
+    const scopeTokens = tokenizeForRelevancy(scopeSummary);
+
+    // Score each candidate by Jaccard overlap with scope
+    const scored = candidates.map(c => {
+        const combined = `${c.title} ${c.summary}`;
+        const tokens = tokenizeForRelevancy(combined);
+        const overlap = jaccardSimilarity(tokens, scopeTokens);
+        return { ...c, overlap };
+    }).sort((a, b) => b.overlap - a.overlap);
+
+    // Pick from top, middle, and bottom thirds
+    const topIdx = 0;
+    const midIdx = Math.floor(scored.length / 2);
+    const lowIdx = scored.length - 1;
+
+    return {
+        high: { title: scored[topIdx].title, summary: scored[topIdx].summary.slice(0, 200), overlap: scored[topIdx].overlap },
+        medium: { title: scored[midIdx].title, summary: scored[midIdx].summary.slice(0, 200), overlap: scored[midIdx].overlap },
+        low: { title: scored[lowIdx].title, summary: scored[lowIdx].summary.slice(0, 200), overlap: scored[lowIdx].overlap },
+    };
+}
+
 /**
  * Builds the GPT-4o-mini scoring prompt for detailed relevancy assessment.
  * Uses comprehensive context for accurate scoring.
+ * Optionally includes dynamic calibration anchors from actual candidates.
  */
 export function buildGPTScoringPrompt(
     scopeSummary: string,
     buzzwords: string | null,
-    candidates: ArticleCandidate[]
+    candidates: ArticleCandidate[],
+    anchorArticles?: CalibrationAnchors | null
 ): { systemPrompt: string; userPrompt: string } {
-    const systemPrompt = `${GPT_SCORING_SYSTEM_PROMPT}\n\n${GPT_SCORING_FEW_SHOT}`;
+    let systemPrompt = GPT_SCORING_SYSTEM_PROMPT + "\n\n";
+
+    if (anchorArticles) {
+        // Dynamic calibration from actual candidates
+        systemPrompt += `## CALIBRATION ANCHORS (from this batch)\n\n`;
+        systemPrompt += `<calibration_high>\nARTICLE: "${anchorArticles.high.title}"\nEXPECTED RANGE: 75-95 (high keyword overlap with research context)\n</calibration_high>\n\n`;
+        systemPrompt += `<calibration_medium>\nARTICLE: "${anchorArticles.medium.title}"\nEXPECTED RANGE: 40-65 (moderate keyword overlap with research context)\n</calibration_medium>\n\n`;
+        systemPrompt += `<calibration_low>\nARTICLE: "${anchorArticles.low.title}"\nEXPECTED RANGE: 10-35 (low keyword overlap with research context)\n</calibration_low>\n\n`;
+        systemPrompt += `Use these anchors to calibrate your scoring scale for THIS specific research context. The static examples below are secondary.\n\n`;
+    }
+
+    systemPrompt += GPT_SCORING_FEW_SHOT;
 
     let userPrompt = "## RESEARCH CONTEXT TO MATCH AGAINST\n\n";
     userPrompt += scopeSummary + "\n\n";

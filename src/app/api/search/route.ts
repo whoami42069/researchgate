@@ -4,11 +4,13 @@ import { searchAllSources, type UnifiedArticle, type SourceType } from "@/lib/so
 import {
     buildQuickFilterPrompt,
     buildGPTScoringPrompt,
+    selectCalibrationAnchors,
     validateFilterOutput,
     validateGPTScoringOutput,
     type ArticleCandidate
 } from "@/lib/prompts";
 import { getFieldConfig, getSourceWeight, type ResearchField } from "@/lib/field-config";
+import { tokenizeForRelevancy, jaccardSimilarity } from "@/lib/text-utils";
 import OpenAI from "openai";
 
 // Initialize OpenAI client for GPT-4o-mini scoring
@@ -21,6 +23,95 @@ const MAX_ARTICLES = 150;
 
 // Maximum articles to send to GPT for scoring (after filter)
 const MAX_SCORING_BATCH = 100;
+
+// ============================================================================
+// STEP 2: Heuristic Pre-Filter — removes obvious noise before LLM filter
+// ============================================================================
+
+interface PreFilterStats {
+    before: number;
+    after: number;
+    rejected: number;
+    reasons: Record<string, number>;
+}
+
+function heuristicPreFilter(
+    articles: UnifiedArticle[],
+    scopeSummary: string,
+    fieldCluster: string
+): { filtered: UnifiedArticle[]; stats: PreFilterStats } {
+    const currentYear = new Date().getFullYear();
+    const maxAge = fieldCluster === "stem" ? 15 : 20;
+    const scopeTokens = tokenizeForRelevancy(scopeSummary);
+
+    const reasons: Record<string, number> = {
+        shortTitle: 0,
+        noContent: 0,
+        tooOld: 0,
+        lowOverlap: 0,
+        compoundWeak: 0,
+    };
+
+    const filtered = articles.filter(article => {
+        // Rule 1: Short title (likely malformed)
+        if ((article.title || "").length < 20) {
+            reasons.shortTitle++;
+            return false;
+        }
+
+        const abstractText = article.abstract || article.summary || "";
+
+        // Rule 2: No content — no abstract AND no summary > 30 chars
+        if (abstractText.length < 30) {
+            reasons.noContent++;
+            return false;
+        }
+
+        // Rule 3: Too old
+        const year = article.year || 0;
+        if (year > 0 && currentYear - year > maxAge) {
+            reasons.tooOld++;
+            return false;
+        }
+
+        // Rule 4: Low keyword overlap — check both title and abstract against scope
+        const titleTokens = tokenizeForRelevancy(article.title || "");
+        const abstractTokens = tokenizeForRelevancy(abstractText);
+        const titleOverlap = jaccardSimilarity(titleTokens, scopeTokens);
+        const abstractOverlap = jaccardSimilarity(abstractTokens, scopeTokens);
+
+        if (titleOverlap < 0.05 && abstractOverlap < 0.05) {
+            reasons.lowOverlap++;
+            return false;
+        }
+
+        // Rule 5: Zero-cite + old (>3yr) + low overlap — compound signal
+        const citations = (article as any).citationCount ?? -1;
+        if (
+            citations === 0 &&
+            year > 0 && currentYear - year > 3 &&
+            titleOverlap < 0.08 && abstractOverlap < 0.08
+        ) {
+            reasons.compoundWeak++;
+            return false;
+        }
+
+        return true;
+    });
+
+    const stats: PreFilterStats = {
+        before: articles.length,
+        after: filtered.length,
+        rejected: articles.length - filtered.length,
+        reasons,
+    };
+
+    console.log(
+        `[Search] Heuristic pre-filter: ${stats.before} → ${stats.after} (rejected ${stats.rejected}: ${JSON.stringify(reasons)})`
+    );
+
+    return { filtered, stats };
+}
 
 export async function POST(req: NextRequest) {
     try {
@@ -77,10 +168,27 @@ export async function POST(req: NextRequest) {
             });
         }
 
+        // STEP 2: Heuristic pre-filter before LLM
+        const { filtered: preFilteredCandidates, stats: preFilterStats } = heuristicPreFilter(
+            uniqueCandidates,
+            scopeSummary,
+            fieldConfig.cluster
+        );
+
+        if (preFilteredCandidates.length === 0) {
+            return NextResponse.json({
+                success: true,
+                articles: [],
+                preFilter: preFilterStats,
+                filter: { enabled: false },
+                scoring: { enabled: false },
+            });
+        }
+
         // 2. PHASE 1: DeepSeek Quick Filter (short, cacheable prompt)
         console.log("[Search] Phase 1: DeepSeek quick filter...");
 
-        const candidates: ArticleCandidate[] = uniqueCandidates.map((c, i) => ({
+        const candidates: ArticleCandidate[] = preFilteredCandidates.map((c, i) => ({
             id: i.toString(),
             title: c.title,
             summary: c.abstract || c.summary,
@@ -113,13 +221,13 @@ export async function POST(req: NextRequest) {
             console.error("[Search] Filter JSON parse error, keeping all articles");
         }
 
-        const filterResult = validateFilterOutput(filterRaw, uniqueCandidates.length);
+        const filterResult = validateFilterOutput(filterRaw, preFilteredCandidates.length);
         console.log(`[Search] Filter: ${filterResult.kept.length} KEEP, ${filterResult.skipped.length} SKIP`);
 
         // Get filtered candidates (only KEEP)
         const keptCandidates = filterResult.kept.map(idx => ({
             originalIndex: idx,
-            article: uniqueCandidates[idx],
+            article: preFilteredCandidates[idx],
             candidate: candidates[idx],
         }));
 
@@ -131,9 +239,10 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({
                 success: true,
                 articles: [],
+                preFilter: preFilterStats,
                 filter: {
                     enabled: true,
-                    totalCandidates: uniqueCandidates.length,
+                    totalCandidates: preFilteredCandidates.length,
                     kept: 0,
                     skipped: filterResult.skipped.length,
                 },
@@ -141,17 +250,25 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // 3. PHASE 2: GPT-4o-mini Detailed Scoring
-        console.log(`[Search] Phase 2: GPT-4o-mini scoring ${candidatesForScoring.length} articles...`);
-
+        // STEP 4: Select calibration anchors from actual candidates
         const scoringCandidates: ArticleCandidate[] = candidatesForScoring.map((c, i) => ({
             id: i.toString(),
             title: c.candidate.title,
             summary: c.candidate.summary,
         }));
 
+        const anchorArticles = selectCalibrationAnchors(scopeSummary, scoringCandidates);
+        if (anchorArticles) {
+            console.log(
+                `[Search] Calibration anchors selected: HIGH="${anchorArticles.high.title.slice(0, 50)}..." MED="${anchorArticles.medium.title.slice(0, 50)}..." LOW="${anchorArticles.low.title.slice(0, 50)}..."`
+            );
+        }
+
+        // 3. PHASE 2: GPT-4o-mini Detailed Scoring
+        console.log(`[Search] Phase 2: GPT-4o-mini scoring ${candidatesForScoring.length} articles...`);
+
         const { systemPrompt: scoringSystemPrompt, userPrompt: scoringUserPrompt } =
-            buildGPTScoringPrompt(scopeSummary, buzzwords || null, scoringCandidates);
+            buildGPTScoringPrompt(scopeSummary, buzzwords || null, scoringCandidates, anchorArticles);
 
         // GPT-4o-mini scoring call - detailed evaluation
         const scoringStartTime = Date.now();
@@ -191,8 +308,37 @@ export async function POST(req: NextRequest) {
         const scoringResult = validateGPTScoringOutput(scoringRaw, candidatesForScoring.length);
         const scores = scoringResult.valid ? scoringResult.data! : {};
 
-        // 4. Merge scores into articles with CAPPED source bonus (±10 max)
-        // This ensures content quality dominates while still giving slight preference to reliable sources
+        // STEP 5: Compute adaptive source weights from GPT results
+        const allRawScores: number[] = [];
+        const perSourceScores: Record<string, number[]> = {};
+
+        candidatesForScoring.forEach((item, scoringIdx) => {
+            const scoreData = scores[scoringIdx.toString()] || { score: 30, reason: "No score" };
+            const raw = scoreData.score;
+            allRawScores.push(raw);
+            const src = item.article.source || "unknown";
+            if (!perSourceScores[src]) perSourceScores[src] = [];
+            perSourceScores[src].push(raw);
+        });
+
+        const globalAvgScore = allRawScores.length > 0
+            ? allRawScores.reduce((a, b) => a + b, 0) / allRawScores.length
+            : 50;
+
+        const adaptiveWeights: Record<string, { avg: number; adjustment: number }> = {};
+        for (const [src, srcScores] of Object.entries(perSourceScores)) {
+            const srcAvg = srcScores.reduce((a, b) => a + b, 0) / srcScores.length;
+            const adjustment = Math.min(5, Math.max(-5, Math.round((srcAvg - globalAvgScore) / 10)));
+            adaptiveWeights[src] = { avg: Math.round(srcAvg * 10) / 10, adjustment };
+        }
+
+        console.log(
+            `[Search] Adaptive weights — Global avg: ${Math.round(globalAvgScore * 10) / 10}, Adjustments: ${JSON.stringify(
+                Object.fromEntries(Object.entries(adaptiveWeights).map(([k, v]) => [k, v.adjustment]))
+            )}`
+        );
+
+        // 4. Merge scores into articles with CAPPED source bonus + adaptive adjustment
         const scoredArticles = candidatesForScoring
             .map((item, scoringIdx) => {
                 const scoreData = scores[scoringIdx.toString()] || { score: 30, reason: "No score" };
@@ -201,20 +347,27 @@ export async function POST(req: NextRequest) {
                 // Get source weight from field config
                 const sourceWeight = getSourceWeight(researchField, item.article.source as any) || 1.0;
 
-                // CAPPED ADDITIVE BONUS: ±10 points max
-                // Weight 2.0 → +10, Weight 1.5 → +5, Weight 1.0 → 0, Weight 0.8 → -2
-                const sourceBonus = Math.min(10, Math.max(-10, Math.round((sourceWeight - 1.0) * 10)));
+                // Base bonus from static config
+                const baseSourceBonus = Math.min(10, Math.max(-10, Math.round((sourceWeight - 1.0) * 10)));
+
+                // Performance adjustment from adaptive weights
+                const src = item.article.source || "unknown";
+                const performanceAdjustment = adaptiveWeights[src]?.adjustment ?? 0;
+
+                // Combined source bonus
+                const sourceBonus = Math.min(10, Math.max(-10, baseSourceBonus + performanceAdjustment));
                 const finalScore = Math.max(0, Math.min(100, rawScore + sourceBonus));
 
                 return {
                     ...item.article,
                     relevancyScore: finalScore,
                     relevancyReason: scoreData.reason,
-                    // Transparent scoring breakdown
                     scoring: {
-                        rawScore: rawScore,
-                        sourceBonus: sourceBonus,
-                        finalScore: finalScore,
+                        rawScore,
+                        baseSourceBonus,
+                        performanceAdjustment,
+                        sourceBonus,
+                        finalScore,
                         model: "gpt-4o-mini",
                     },
                 };
@@ -253,7 +406,7 @@ export async function POST(req: NextRequest) {
                     input: filterInputTokens,
                     output: filterOutputTokens,
                     model: "deepseek-chat",
-                    cacheable: true, // System prompt is short & cacheable
+                    cacheable: true,
                 },
                 scoring: {
                     input: scoringInputTokens,
@@ -268,10 +421,12 @@ export async function POST(req: NextRequest) {
                 maxArticlesLimit: MAX_ARTICLES,
                 sources: sourceBreakdown,
                 queriesUsed: queries.slice(0, 8).length,
+                adaptiveWeights,
             },
+            preFilter: preFilterStats,
             filter: {
                 enabled: true,
-                totalCandidates: uniqueCandidates.length,
+                totalCandidates: preFilteredCandidates.length,
                 kept: filterResult.kept.length,
                 skipped: filterResult.skipped.length,
                 durationMs: filterDuration,

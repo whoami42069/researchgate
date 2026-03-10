@@ -3,6 +3,7 @@ import { extractAndSummarizeText } from "@/lib/pdf-loader";
 import { deepseek, MODELS, truncateToTokenLimit, estimateTokenCount, MAX_TOKENS } from "@/lib/deepseek";
 import { buildAnalysisPrompt, buildQueryGenerationPrompt, validateAnalysisOutput, type AnalysisWeights, type PdfDocument, type DoiDocument } from "@/lib/prompts";
 import { getFieldConfig } from "@/lib/field-config";
+import { tokenize, jaccardSimilarity } from "@/lib/text-utils";
 import OpenAI from "openai";
 
 // Initialize OpenAI client for GPT-4o-mini
@@ -317,15 +318,53 @@ export async function POST(req: NextRequest) {
         // Combine: DeepSeek queries first (higher priority), then GPT queries
         const allQueries = [...deepseekQueries, ...gptQueries];
 
-        // Dedupe by normalized form (lowercase, trimmed)
-        const seenQueries = new Set<string>();
-        const uniqueQueries = allQueries.filter(q => {
+        // Stage A: Exact-match dedup (lowercase, trimmed)
+        const seenExact = new Set<string>();
+        const exactDeduped = allQueries.filter(q => {
             if (!q || typeof q !== "string") return false;
             const normalized = q.toLowerCase().trim();
-            if (seenQueries.has(normalized)) return false;
-            seenQueries.add(normalized);
+            if (seenExact.has(normalized)) return false;
+            seenExact.add(normalized);
             return true;
-        }).slice(0, 8); // Max 8 queries (4 from each LLM, deduped)
+        });
+
+        // Stage B: Jaccard similarity dedup (threshold 0.5)
+        const acceptedTokenSets: Set<string>[] = [];
+        const uniqueQueries: string[] = [];
+        for (const q of exactDeduped) {
+            const tokens = tokenize(q);
+            let tooSimilar = false;
+            for (const existing of acceptedTokenSets) {
+                if (jaccardSimilarity(tokens, existing) > 0.5) {
+                    console.log(`[Analyze] Dropped semantically similar query: "${q}"`);
+                    tooSimilar = true;
+                    break;
+                }
+            }
+            if (!tooSimilar) {
+                uniqueQueries.push(q);
+                acceptedTokenSets.push(tokens);
+            }
+            if (uniqueQueries.length >= 8) break;
+        }
+
+        // Stage C: Dimension coverage check (informational)
+        const DIMENSION_MARKERS: Record<string, string[]> = {
+            CORE_TOPIC: ["therapy", "treatment", "intervention", "disorder", "disease", "syndrome", "symptom"],
+            MECHANISM: ["mechanism", "pathway", "mediator", "moderator", "theory", "model", "neural", "cognitive", "process"],
+            CONTEXT: ["clinical", "community", "school", "workplace", "primary care", "population", "setting", "adults", "children", "adolescents"],
+            METHODOLOGY: ["randomized", "meta-analysis", "systematic review", "longitudinal", "cross-sectional", "qualitative", "trial", "cohort", "survey"],
+        };
+        const coveredDimensions = new Set<string>();
+        for (const q of uniqueQueries) {
+            const lower = q.toLowerCase();
+            for (const [dim, markers] of Object.entries(DIMENSION_MARKERS)) {
+                if (markers.some(m => lower.includes(m))) {
+                    coveredDimensions.add(dim);
+                }
+            }
+        }
+        console.log(`[Analyze] Dimension coverage: ${coveredDimensions.size}/4 (${Array.from(coveredDimensions).join(", ")})`);
 
         console.log(`[Analyze] Merged queries: ${uniqueQueries.length} unique (DeepSeek: ${deepseekQueries.length}, GPT: ${gptQueries.length})`);
 
